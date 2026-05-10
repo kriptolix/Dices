@@ -18,12 +18,12 @@ from originals.sound import SoundManager
 # Assets dos dados
 # ---------------------------------------------------------------------------
 DICE_ASSETS = {
-    "d4":  {"obj": "assets/d4/d4.obj",   "tex": "assets/d4/textures"},
-    "d6":  {"obj": "assets/d6/d6.obj", "tex": "assets/d6/textures"},
-    "d8":  {"obj": "assets/d8/d8.obj",   "tex": "assets/d8/textures"},
-    "d10": {"obj": "assets/d10/d10.obj", "tex": "assets/d10/textures"},
-    "d12": {"obj": "assets/d12/d12.obj", "tex": "assets/d12/textures"},
-    "d20": {"obj": "assets/d20/d20.obj", "tex": "assets/d20/textures"},
+    "d4":  {"obj": "assets/d4/d4.obj",   "tex": "assets/d4"},
+    "d6":  {"obj": "assets/d6/d6.obj", "tex": "assets/d6"},
+    "d8":  {"obj": "assets/d8/d8.obj",   "tex": "assets/d8"},
+    "d10": {"obj": "assets/d10/d10.obj", "tex": "assets/d10"},
+    "d12": {"obj": "assets/d12/d12.obj", "tex": "assets/d12"},
+    "d20": {"obj": "assets/d20/d20.obj", "tex": "assets/d20"},
 }
 
 TEX_BASE   = "DefaultMaterial_Base_color.png"
@@ -36,6 +36,7 @@ FLOOR_TEX_NORMAL = "assets/floor/wood_normal_directx.png"
 
 def _find_tex(folder, filename):
     p = os.path.join(folder, filename)
+    print(f"file {p}")
     return p if os.path.isfile(p) else None
 
 
@@ -219,7 +220,7 @@ class DiceGLArea(Gtk.GLArea):
         vao, vcount = upload_mesh(pos_flat, nor_flat, uv_flat, tan_flat)
         self._dice_vaos[dice_type] = (vao, vcount)
 
-        tex_base_path   = _find_tex(tex_dir, TEX_BASE)
+        tex_base_path   = _find_tex(tex_dir, TEX_BASE)        
         tex_normal_path = _find_tex(tex_dir, TEX_NORMAL)
 
         self._dice_textures[dice_type] = {
@@ -227,6 +228,7 @@ class DiceGLArea(Gtk.GLArea):
             "normal": load_texture(tex_normal_path, srgb=False) if tex_normal_path else None,
         }
         loaded = [k for k, v in self._dice_textures[dice_type].items() if v]
+        print("tests", tex_base_path)
         print(f"[{dice_type}] Texturas: {', '.join(loaded) or 'nenhuma (fallback cor)'}")
 
     # ------------------------------------------------------------------

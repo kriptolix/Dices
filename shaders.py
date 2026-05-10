@@ -1,23 +1,26 @@
+"""
+shaders.py — Shaders GLSL e utilitários de upload para a GPU.
+
+Responsabilidades:
+  - Código-fonte dos shaders PBR-lite e Phong simples
+  - Compilação e linkagem de programas OpenGL
+  - Upload de geometria (VAO/VBO)
+  - Carregamento de texturas (Pillow → OpenGL)
+"""
+
 from OpenGL.GL import *
 import numpy as np
+
 
 # ---------------------------------------------------------------------------
 # Shader PBR-lite: Base Color + Normal map
 #
-# Atributos de vértice:
-#   loc 0 — aPos     vec3
-#   loc 1 — aNormal  vec3
-#   loc 2 — aUV      vec2
-#   loc 3 — aTangent vec3
-#
-# Uniforms de textura:
-#   uTexBase   sampler2D  — Base Color (sRGB)
-#   uTexNormal sampler2D  — Normal map DirectX (Y invertido vs OpenGL)
-#   uHasBase   int        — 1 se a textura de base está carregada
-#   uHasNormal int        — 1 se o normal map está carregado
+# Atributos:  loc 0 aPos, loc 1 aNormal, loc 2 aUV, loc 3 aTangent
+# Uniforms:   uTexBase, uTexNormal, uHasBase, uHasNormal,
+#             uMVP, uModelView, uNormalMat, uColor, uAlpha, uLightPos
 # ---------------------------------------------------------------------------
 
-VERT_SRC = """
+_VERT_PBR = """
 #version 330 core
 
 layout(location=0) in vec3 aPos;
@@ -29,26 +32,24 @@ uniform mat4 uMVP;
 uniform mat4 uModelView;
 uniform mat3 uNormalMat;
 
-out vec3 vFragPos;   // em view-space
+out vec3 vFragPos;
 out vec2 vUV;
-out mat3 vTBN;       // tangent-to-view matrix
+out mat3 vTBN;
 
 void main() {
     gl_Position = uMVP * vec4(aPos, 1.0);
     vFragPos    = vec3(uModelView * vec4(aPos, 1.0));
     vUV         = aUV;
 
-    // Constrói TBN em view-space
     vec3 N = normalize(uNormalMat * aNormal);
     vec3 T = normalize(uNormalMat * aTangent);
-    T = normalize(T - dot(T, N) * N);   // re-ortogonaliza
+    T = normalize(T - dot(T, N) * N);
     vec3 B = cross(N, T);
-
     vTBN = mat3(T, B, N);
 }
 """
 
-FRAG_SRC = """
+_FRAG_PBR = """
 #version 330 core
 
 in vec3 vFragPos;
@@ -60,52 +61,45 @@ uniform sampler2D uTexNormal;
 uniform int       uHasBase;
 uniform int       uHasNormal;
 
-uniform vec3  uColor;      // cor fallback quando não há textura
+uniform vec3  uColor;
 uniform float uAlpha;
-uniform vec3  uLightPos;   // em view-space
+uniform vec3  uLightPos;
 
 out vec4 FragColor;
 
 void main() {
-    // ---- Cor base ----
     vec3 baseColor = (uHasBase == 1)
-        ? pow(texture(uTexBase, vUV).rgb, vec3(2.2))   // sRGB → linear
+        ? pow(texture(uTexBase, vUV).rgb, vec3(2.2))
         : uColor;
 
-    // ---- Normal ----
     vec3 N;
     if (uHasNormal == 1) {
         vec3 nMap = texture(uTexNormal, vUV).rgb * 2.0 - 1.0;
-        nMap.y = -nMap.y;   // DirectX → OpenGL: inverte canal Y
+        nMap.y = -nMap.y;   // DirectX → OpenGL
         N = normalize(vTBN * nMap);
     } else {
-        N = normalize(vTBN[2]);   // coluna Z = normal geométrica
+        N = normalize(vTBN[2]);
     }
 
-    // ---- Iluminação Blinn-Phong ----
-    vec3  L       = normalize(uLightPos - vFragPos);
-    vec3  V       = normalize(-vFragPos);
-    vec3  H       = normalize(L + V);
+    vec3  L    = normalize(uLightPos - vFragPos);
+    vec3  V    = normalize(-vFragPos);
+    vec3  H    = normalize(L + V);
+    float diff = max(dot(N, L), 0.0);
+    float spec = pow(max(dot(N, H), 0.0), 64.0) * 0.4;
 
-    float ambient = 0.18;
-    float diff    = max(dot(N, L), 0.0);
-    float spec    = pow(max(dot(N, H), 0.0), 64.0) * 0.4;
-
-    vec3 col = baseColor * (ambient + diff * 0.80) + vec3(spec);
-
-    // Correção gamma na saída
+    vec3 col = baseColor * (0.18 + diff * 0.80) + vec3(spec);
     col = pow(col, vec3(1.0 / 2.2));
-
     FragColor = vec4(col, uAlpha);
 }
 """
 
 # ---------------------------------------------------------------------------
-# Shader simples para objetos sem textura (piso da bandeja)
+# Shader Phong simples (piso sem UV)
 # ---------------------------------------------------------------------------
 
-VERT_SIMPLE = """
+_VERT_SIMPLE = """
 #version 330 core
+
 layout(location=0) in vec3 aPos;
 layout(location=1) in vec3 aNormal;
 
@@ -123,8 +117,9 @@ void main() {
 }
 """
 
-FRAG_SIMPLE = """
+_FRAG_SIMPLE = """
 #version 330 core
+
 in vec3 vNormal;
 in vec3 vFragPos;
 
@@ -135,22 +130,21 @@ uniform vec3  uLightPos;
 out vec4 FragColor;
 
 void main() {
-    vec3 L    = normalize(uLightPos - vFragPos);
-    vec3 H    = normalize(L + normalize(-vFragPos));
-    float amb = 0.20;
+    vec3  L   = normalize(uLightPos - vFragPos);
+    vec3  H   = normalize(L + normalize(-vFragPos));
     float dif = max(dot(vNormal, L), 0.0);
     float spc = pow(max(dot(vNormal, H), 0.0), 48.0) * 0.3;
-    vec3  col = uColor * (amb + dif * 0.75) + vec3(spc);
+    vec3  col = uColor * (0.20 + dif * 0.75) + vec3(spc);
     FragColor = vec4(col, uAlpha);
 }
 """
 
 
 # ---------------------------------------------------------------------------
-# Helpers de compilação / link
+# Compilação e link
 # ---------------------------------------------------------------------------
 
-def _compile(src, kind):
+def _compile_shader(src: str, kind: int) -> int:
     sh = glCreateShader(kind)
     glShaderSource(sh, src)
     glCompileShader(sh)
@@ -159,41 +153,43 @@ def _compile(src, kind):
     return sh
 
 
-def _link(vs_src, fs_src):
-    vs = _compile(vs_src, GL_VERTEX_SHADER)
-    fs = _compile(fs_src, GL_FRAGMENT_SHADER)
-    p = glCreateProgram()
-    glAttachShader(p, vs)
-    glAttachShader(p, fs)
-    glLinkProgram(p)
-    if not glGetProgramiv(p, GL_LINK_STATUS):
-        raise RuntimeError(glGetProgramInfoLog(p).decode())
+def _link_program(vs_src: str, fs_src: str) -> int:
+    vs = _compile_shader(vs_src, GL_VERTEX_SHADER)
+    fs = _compile_shader(fs_src, GL_FRAGMENT_SHADER)
+    prog = glCreateProgram()
+    glAttachShader(prog, vs)
+    glAttachShader(prog, fs)
+    glLinkProgram(prog)
+    if not glGetProgramiv(prog, GL_LINK_STATUS):
+        raise RuntimeError(glGetProgramInfoLog(prog).decode())
     glDeleteShader(vs)
     glDeleteShader(fs)
-    return p
+    return prog
 
 
-def make_program():
+def make_program() -> int:
     """Programa PBR-lite (dados com textura)."""
-    return _link(VERT_SRC, FRAG_SRC)
+    return _link_program(_VERT_PBR, _FRAG_PBR)
 
 
-def make_simple_program():
-    """Programa Phong simples (piso, objetos sem UV)."""
-    return _link(VERT_SIMPLE, FRAG_SIMPLE)
+def make_simple_program() -> int:
+    """Programa Phong simples (piso / objetos sem UV)."""
+    return _link_program(_VERT_SIMPLE, _FRAG_SIMPLE)
 
 
 # ---------------------------------------------------------------------------
 # Upload de geometria
 # ---------------------------------------------------------------------------
 
-def upload_mesh(pos_flat, nor_flat, uv_flat=None, tan_flat=None):
+def upload_mesh(pos_flat, nor_flat, uv_flat=None, tan_flat=None) -> tuple[int, int]:
     """
     Cria VAO + VBOs e retorna (vao, vertex_count).
 
-    Se uv_flat e tan_flat forem fornecidos, registra os atributos 2 e 3.
-    Caso contrário, apenas 0 (pos) e 1 (nor) são registrados — compatível
-    com o shader simples do piso.
+    Atributos registrados:
+      0 — posições (obrigatório)
+      1 — normais  (obrigatório)
+      2 — UVs      (opcional)
+      3 — tangentes(opcional)
     """
     vao = glGenVertexArrays(1)
     glBindVertexArray(vao)
@@ -208,8 +204,7 @@ def upload_mesh(pos_flat, nor_flat, uv_flat=None, tan_flat=None):
 
     _vbo(pos_flat, 0, 3)
     _vbo(nor_flat, 1, 3)
-
-    if uv_flat is not None and len(uv_flat) > 0:
+    if uv_flat  is not None and len(uv_flat)  > 0:
         _vbo(uv_flat,  2, 2)
     if tan_flat is not None and len(tan_flat) > 0:
         _vbo(tan_flat, 3, 3)
@@ -222,38 +217,30 @@ def upload_mesh(pos_flat, nor_flat, uv_flat=None, tan_flat=None):
 # Carregamento de textura
 # ---------------------------------------------------------------------------
 
-def load_texture(path, srgb=False):
+def load_texture(path: str, srgb: bool = False) -> int:
     """
-    Carrega uma imagem PNG/JPG como textura OpenGL e retorna o texture ID.
+    Carrega PNG/JPG como textura OpenGL.
 
-    srgb=True  → usa GL_SRGB8_ALPHA8 (correto para Base Color)
-    srgb=False → usa GL_RGBA8 (correto para Normal, Roughness, etc.)
-
-    Requer Pillow: pip install Pillow
+    srgb=True  → GL_SRGB8_ALPHA8  (Base Color)
+    srgb=False → GL_RGBA8          (Normal, Roughness, etc.)
     """
     from PIL import Image
-    import numpy as np
 
-    img = Image.open(path).convert("RGBA")
-    img = img.transpose(Image.FLIP_TOP_BOTTOM)   # OpenGL origem = canto inferior esq.
+    img  = Image.open(path).convert("RGBA").transpose(Image.FLIP_TOP_BOTTOM)
     data = np.array(img, dtype=np.uint8)
 
     tex = glGenTextures(1)
     glBindTexture(GL_TEXTURE_2D, tex)
-
-    internal = GL_SRGB8_ALPHA8 if srgb else GL_RGBA8
-
     glTexImage2D(
-        GL_TEXTURE_2D, 0, internal,
+        GL_TEXTURE_2D, 0,
+        GL_SRGB8_ALPHA8 if srgb else GL_RGBA8,
         img.width, img.height, 0,
         GL_RGBA, GL_UNSIGNED_BYTE, data
     )
     glGenerateMipmap(GL_TEXTURE_2D)
-
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
-
     glBindTexture(GL_TEXTURE_2D, 0)
     return tex

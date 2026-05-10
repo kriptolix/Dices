@@ -1,11 +1,20 @@
+"""
+main.py — Ponto de entrada da aplicação GTK4.
+
+Responsabilidades:
+  - Janela principal e layout de controles
+  - Seleção de tipo/quantidade de dado
+  - Disparo e monitoramento da simulação
+"""
+
 import gi
-gi.require_version('Gtk', '4.0')
+gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, GLib
 
 import sys
 
-from originals.physics import PhysicsWorld
-from originals.glarena import DiceGLArea
+from physics import PhysicsWorld
+from glarena import DiceGLArea
 
 
 DICE_TYPES = ["d4", "d6", "d8", "d10", "d12", "d20"]
@@ -13,15 +22,17 @@ DICE_TYPES = ["d4", "d6", "d8", "d10", "d12", "d20"]
 
 class AppWindow(Gtk.ApplicationWindow):
     def __init__(self, app):
-        super().__init__(application=app,
-                         title="Rolador de Dados 3D — PyBullet + GTK4 + OpenGL")
+        super().__init__(
+            application=app,
+            title="Rolador de Dados 3D — PyBullet + GTK4 + OpenGL",
+        )
         self.set_default_size(680, 600)
 
         self.physics = PhysicsWorld()
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        root.set_margin_top(10); root.set_margin_bottom(10)
-        root.set_margin_start(10); root.set_margin_end(10)
+        root.set_margin_top(10);    root.set_margin_bottom(10)
+        root.set_margin_start(10);  root.set_margin_end(10)
         self.set_child(root)
 
         # Título
@@ -29,7 +40,7 @@ class AppWindow(Gtk.ApplicationWindow):
         title.add_css_class("title-2")
         root.append(title)
 
-        # GL Area
+        # Área GL
         self.gl = DiceGLArea(self.physics)
         self.gl.set_size_request(660, 460)
         self.gl.set_vexpand(True)
@@ -40,13 +51,11 @@ class AppWindow(Gtk.ApplicationWindow):
         ctrl.set_halign(Gtk.Align.CENTER)
         root.append(ctrl)
 
-        # Tipo de dado
         ctrl.append(Gtk.Label(label="Tipo:"))
         self.dice_combo = Gtk.DropDown.new_from_strings(DICE_TYPES)
-        self.dice_combo.set_selected(1)   # d6 por padrão
+        self.dice_combo.set_selected(1)   # d6 padrão
         ctrl.append(self.dice_combo)
 
-        # Quantidade
         ctrl.append(Gtk.Label(label="Qtd:"))
         adj = Gtk.Adjustment(value=1, lower=1, upper=5,
                              step_increment=1, page_increment=1)
@@ -55,7 +64,6 @@ class AppWindow(Gtk.ApplicationWindow):
         self.spin.set_numeric(True)
         ctrl.append(self.spin)
 
-        # Botão rolar
         btn = Gtk.Button(label="🎲  Rolar")
         btn.add_css_class("suggested-action")
         btn.connect("clicked", self._on_roll)
@@ -66,22 +74,22 @@ class AppWindow(Gtk.ApplicationWindow):
         self.status.add_css_class("dim-label")
         root.append(self.status)
 
-        # Inicia render idle (sem dados ainda, só mostra o piso)
+        # Render idle (só piso, sem dados)
         self.gl.timer_id = GLib.timeout_add(32, self._idle_render)
 
-    def _idle_render(self):
+    def _idle_render(self) -> bool:
         self.gl.queue_render()
         return True
 
-    def _on_roll(self, btn):
-        n = int(self.spin.get_value())
-        idx = self.dice_combo.get_selected()
+    def _on_roll(self, _btn):
+        n         = int(self.spin.get_value())
+        idx       = self.dice_combo.get_selected()
         dice_type = DICE_TYPES[idx]
         self.status.set_label(f"Rolando {n}× {dice_type.upper()}…")
         self.gl.start_simulation(n, dice_type)
         GLib.timeout_add(300, self._check_done)
 
-    def _check_done(self):
+    def _check_done(self) -> bool:
         if self.gl.simulating:
             return True
         self.status.set_label("Dados parados. Role de novo!")
@@ -94,8 +102,7 @@ class App(Gtk.Application):
         self.connect("activate", self._on_activate)
 
     def _on_activate(self, app):
-        win = AppWindow(app)
-        win.present()
+        AppWindow(app).present()
 
 
 if __name__ == "__main__":

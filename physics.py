@@ -1,3 +1,13 @@
+"""
+physics.py — Simulação física dos dados via PyBullet.
+
+Responsabilidades:
+  - Construção da bandeja estática (piso + paredes)
+  - Criação e destruição de corpos rígidos dos dados
+  - Shapes de colisão por tipo (D4–D20)
+  - Stepping da simulação e detecção de repouso
+"""
+
 import pybullet as pb
 import pybullet_data
 import math
@@ -5,8 +15,8 @@ import random
 import numpy as np
 
 # Dimensões da bandeja (em metros do Bullet)
-TRAY_W  = 7.0    # largura X
-TRAY_D  = 7.0    # profundidade Z
+TRAY_W  = 10.0    # largura X
+TRAY_D  = 10.0    # profundidade Z
 TRAY_H  = 0.15   # espessura do piso
 WALL_H  = 4.0    # altura das paredes
 WALL_T  = 0.6    # espessura das paredes
@@ -14,14 +24,18 @@ WALL_T  = 0.6    # espessura das paredes
 # Tamanho alvo do dado no mundo físico (em metros).
 DICE_TARGET_SIZE = 0.8
 
-LAUNCH_Y       = 2.5
+LAUNCH_Y       = 1.5
 LAUNCH_VEL_MAX = 5.0
 
 # Timestep fixo da simulação Bullet
 SIM_TIMESTEP   = 1.0 / 240.0
-# Sub-passos por chamada de _tick (1 tick ≈ 16ms → 4 × 1/240 ≈ 16.7ms)
-SIM_SUBSTEPS   = 4
+# Sub-passos por chamada de step (1 tick ≈ 16ms → 4 × 1/240 ≈ 16.7ms)
+SIM_SUBSTEPS   = 6
 
+
+# ---------------------------------------------------------------------------
+# Geradores de vértices para shapes de colisão
+# ---------------------------------------------------------------------------
 
 def _icosahedron_verts(r=1.0):
     """12 vértices de icosaedro regular (D20)."""
@@ -29,9 +43,9 @@ def _icosahedron_verts(r=1.0):
     pts = []
     for s1 in (+1, -1):
         for s2 in (+1, -1):
-            pts.append([0,       s1 * 1, s2 * phi])
-            pts.append([s1 * 1,  s2 * phi, 0])
-            pts.append([s1 * phi, 0,      s2 * 1])
+            pts.append([0,        s1 * 1,    s2 * phi])
+            pts.append([s1 * 1,   s2 * phi,  0       ])
+            pts.append([s1 * phi, 0,          s2 * 1  ])
     norm = math.sqrt(1 + phi * phi)
     return [[x / norm * r, y / norm * r, z / norm * r] for x, y, z in pts]
 
@@ -52,7 +66,7 @@ def _tetrahedron_verts(r=1.0):
         [ 1, -1, -1],
         [-1,  1, -1],
         [-1, -1,  1],
-    ]  # já normalizados para distância sqrt(3) do centro
+    ]  # normalizados para distância sqrt(3) do centro
 
 
 def _dodecahedron_verts(r=1.0):
@@ -62,12 +76,12 @@ def _dodecahedron_verts(r=1.0):
     for s1 in (+1, -1):
         for s2 in (+1, -1):
             for s3 in (+1, -1):
-                pts.append([s1 * 1, s2 * 1, s3 * 1])
+                pts.append([s1 * 1,   s2 * 1,   s3 * 1  ])
     for s1 in (+1, -1):
         for s2 in (+1, -1):
-            pts.append([0,        s1 * phi, s2 / phi])
-            pts.append([s1 / phi, 0,        s2 * phi])
-            pts.append([s1 * phi, s2 / phi, 0       ])
+            pts.append([0,         s1 * phi,  s2 / phi])
+            pts.append([s1 / phi,  0,          s2 * phi])
+            pts.append([s1 * phi,  s2 / phi,  0        ])
     norm = math.sqrt(3)
     return [[x / norm * r, y / norm * r, z / norm * r] for x, y, z in pts]
 
@@ -96,6 +110,10 @@ _COLLISION_VERTS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# PhysicsWorld
+# ---------------------------------------------------------------------------
+
 class PhysicsWorld:
     def __init__(self):
         self.client = pb.connect(pb.DIRECT)
@@ -104,15 +122,17 @@ class PhysicsWorld:
         pb.setAdditionalSearchPath(pybullet_data.getDataPath(),
                                    physicsClientId=self.client)
 
-        self.dice_ids   = []
-        self.dice_verts = None   # verts visuais escalados (setado pelo renderer)
+        self.dice_ids    = []
         self._static_ids = []
         self._dice_scale = 1.0
+        self._still_frames = 0
+
         self._build_tray()
 
     # ------------------------------------------------------------------
     # Escala visual → física
     # ------------------------------------------------------------------
+
     def set_dice_scale(self, scale: float):
         """Recebe a escala calculada pelo renderer a partir do bounding box do OBJ."""
         self._dice_scale = scale
@@ -120,6 +140,7 @@ class PhysicsWorld:
     # ------------------------------------------------------------------
     # Bandeja estática
     # ------------------------------------------------------------------
+
     def _static_box(self, half_extents, position, orientation=(0, 0, 0, 1)):
         shape = pb.createCollisionShape(
             pb.GEOM_BOX,
@@ -142,18 +163,18 @@ class PhysicsWorld:
         ht = TRAY_H / 2
         wt = WALL_T / 2
         wh = WALL_H / 2
+        ext = hw + wt
 
         # Piso
         floor_id = self._static_box([hw, ht, hd], [0, -ht, 0])
         pb.changeDynamics(
             floor_id, -1,
             restitution=0.45,
-            lateralFriction=0.6,
+            lateralFriction=1.2,
             physicsClientId=self.client
         )
 
-        # Paredes: extensão extra nos cantos para eliminar gaps
-        ext = hw + wt
+        # Paredes
         for pos, he in [
             ([0,  wh, -(hd + wt)], [ext, wh, wt]),   # frente
             ([0,  wh,  (hd + wt)], [ext, wh, wt]),   # fundo
@@ -169,15 +190,11 @@ class PhysicsWorld:
             )
 
     # ------------------------------------------------------------------
-    # Criação de dados — shape de colisão via primitivas matemáticas
+    # Criação de dados
     # ------------------------------------------------------------------
+
     def _make_collision_shape(self, dice_type: str) -> int:
-        """
-        Retorna um collisionShapeIndex para o tipo de dado.
-        D6 usa GEOM_BOX (mais eficiente e preciso).
-        Demais usam GEOM_MESH convex hull com vértices matemáticos mínimos.
-        """
-        r = DICE_TARGET_SIZE / 2.0   # raio = metade do tamanho alvo
+        r = DICE_TARGET_SIZE / 2.0
 
         if dice_type == "d6":
             return pb.createCollisionShape(
@@ -188,43 +205,35 @@ class PhysicsWorld:
 
         gen = _COLLISION_VERTS.get(dice_type)
         if gen is None:
-            raise ValueError(f"Tipo de dado desconhecido: {dice_type!r}. "
-                             f"Use um de: d4, d6, d8, d10, d12, d20")
+            raise ValueError(
+                f"Tipo de dado desconhecido: {dice_type!r}. "
+                f"Use um de: d4, d6, d8, d10, d12, d20"
+            )
 
         verts = gen(r)
         return pb.createCollisionShape(
             pb.GEOM_MESH,
             vertices=verts,
             physicsClientId=self.client,
-            flags=pb.GEOM_FORCE_CONCAVE_TRIMESH  # força convex hull
+            flags=pb.GEOM_FORCE_CONCAVE_TRIMESH
         )
 
-    def add_dice(self, dice_type: str = "d6"):
-        """
-        Cria um dado do tipo especificado com shape de colisão preciso.
-
-        O mesh visual (OBJ) é carregado separadamente em glarena.py;
-        aqui criamos APENAS o corpo físico com primitivas matemáticas.
-
-        dice_type: "d4" | "d6" | "d8" | "d10" | "d12" | "d20"
-        """
+    def add_dice(self, dice_type: str = "d6") -> int:
+        """Cria um dado do tipo especificado e retorna seu body ID."""
         shape = self._make_collision_shape(dice_type)
 
-        # Posição de lançamento aleatória dentro da bandeja
-        x = random.uniform(-TRAY_W * 0.25, TRAY_W * 0.25)
-        z = random.uniform(-TRAY_D * 0.25, TRAY_D * 0.25)
+        x   = random.uniform(-TRAY_W * 0.2, TRAY_W * 0.2)   # centralizado horizontalmente
+        z   = TRAY_D * 0.45                                   # próximo à parede frontal
         pos = [x, LAUNCH_Y, z]
 
-        # Orientação aleatória
         axis_raw = [random.gauss(0, 1) for _ in range(3)]
-        al = math.sqrt(sum(a * a for a in axis_raw))
-        axis = [a / al for a in axis_raw]
-        angle = random.uniform(0, 2 * math.pi)
-        orn = pb.getQuaternionFromAxisAngle(axis, angle,
-                                            physicsClientId=self.client)
+        al       = math.sqrt(sum(a * a for a in axis_raw))
+        axis     = [a / al for a in axis_raw]
+        angle    = random.uniform(0, 2 * math.pi)
+        orn      = pb.getQuaternionFromAxisAngle(axis, angle,
+                                                 physicsClientId=self.client)
 
-        # Massa proporcional ao volume (aprox. esfera de raio r)
-        r = DICE_TARGET_SIZE / 2.0
+        r    = DICE_TARGET_SIZE / 2.0
         mass = 0.02 * (4 / 3) * math.pi * r ** 3 * 1000   # ~20g para d6 padrão
 
         body = pb.createMultiBody(
@@ -235,30 +244,33 @@ class PhysicsWorld:
             physicsClientId=self.client
         )
 
-        # CCD: raio menor que metade do menor lado do dado
-        ccd_r = DICE_TARGET_SIZE * 0.25
-
-        pb.changeDynamics(
+        pb.changeDynamics(            
             body, -1,
             restitution=0.4,
-            linearDamping=0.03,
-            angularDamping=0.04,
-            rollingFriction=0.08,
-            spinningFriction=0.05,
-            lateralFriction=0.55,
-            ccdSweptSphereRadius=ccd_r,
+            lateralFriction=1.5,      # alto: converte deslizamento em rolamento
+            rollingFriction=0.01,     # baixo: não freia o rolamento
+            spinningFriction=0.02,    # baixo: não freia o giro
+            linearDamping=0.01,       # era 0.03 — menos resistência ao movimento
+            angularDamping=0.01,      # era 0.04 — deixa o dado girar mais livremente
+            
+            ccdSweptSphereRadius=DICE_TARGET_SIZE * 0.25,
             physicsClientId=self.client
         )
 
-        # Velocidade de lançamento
-        vx = random.uniform(-LAUNCH_VEL_MAX, LAUNCH_VEL_MAX)
-        vz = random.uniform(-LAUNCH_VEL_MAX, LAUNCH_VEL_MAX)
-        pb.resetBaseVelocity(
+        dir_x = -1.0 if x > 0 else 1.0   # aponta para o centro
+
+        pb.resetBaseVelocity(            
             body,
-            linearVelocity=[vx, random.uniform(0.5, 2.5), vz],
-            angularVelocity=[random.uniform(-8, 8),
-                             random.uniform(-8, 8),
-                             random.uniform(-8, 8)],
+            linearVelocity=[
+                random.uniform(-0.5, 0.5),        # desvio lateral mínimo
+                random.uniform(1.0, 3.0),         # leve vertical
+                random.uniform(-8.0, -6.0),       # impulso principal para dentro
+            ],
+            angularVelocity=[
+                random.uniform(-8, 8),
+                random.uniform(-8, 8),
+                random.uniform(-8, 8),
+            ],
             physicsClientId=self.client
         )
 
@@ -266,6 +278,9 @@ class PhysicsWorld:
         return body
 
     # ------------------------------------------------------------------
+    # Controle de simulação
+    # ------------------------------------------------------------------
+
     def remove_all_dice(self):
         for bid in self.dice_ids:
             pb.removeBody(bid, physicsClientId=self.client)
@@ -276,41 +291,28 @@ class PhysicsWorld:
         for _ in range(SIM_SUBSTEPS):
             pb.stepSimulation(physicsClientId=self.client)
 
-    def get_transforms(self):
-        result = []
-        for bid in self.dice_ids:
-            pos, orn = pb.getBasePositionAndOrientation(
-                bid, physicsClientId=self.client)
-            result.append((pos, orn))
-        return result
+    def get_transforms(self) -> list[tuple]:
+        """Retorna lista de (pos, orn) para todos os dados."""
+        return [
+            pb.getBasePositionAndOrientation(bid, physicsClientId=self.client)
+            for bid in self.dice_ids
+        ]
 
-    def all_sleeping(self):
+    def all_sleeping(self) -> bool:
         """
-        Verifica se todos os dados pararam de se mover.
-
-        getActivationState não está disponível em todas as versões do PyBullet,
-        então usamos velocidade linear + angular com um limiar conservador.
-        O contador _still_frames exige que o dado fique parado por ao menos
-        30 ticks consecutivos antes de declarar sleeping — evita falso positivo
-        logo após o lançamento (quando a velocidade inicial ainda é zero por
-        um frame antes do primeiro impulso).
+        Retorna True quando todos os dados ficaram parados por ≥30 ticks.
+        Usa velocidade linear+angular para evitar dependência de activation state.
         """
         if not self.dice_ids:
             return True
 
-        all_still = True
-        for bid in self.dice_ids:
-            lv, av = pb.getBaseVelocity(bid, physicsClientId=self.client)
-            speed = sum(v * v for v in lv) + sum(v * v for v in av)
-            if speed > 0.01 ** 2:   # limiar em velocidade² (0.01 m/s)
-                all_still = False
-                break
+        all_still = all(
+            sum(v * v for v in lv) + sum(v * v for v in av) <= 0.01 ** 2
+            for bid in self.dice_ids
+            for lv, av in [pb.getBaseVelocity(bid, physicsClientId=self.client)]
+        )
 
-        if all_still:
-            self._still_frames = getattr(self, "_still_frames", 0) + 1
-        else:
-            self._still_frames = 0
-
+        self._still_frames = (self._still_frames + 1) if all_still else 0
         return self._still_frames >= 30
 
     def __del__(self):
