@@ -10,6 +10,13 @@ A física do d4 não aparece estar funcionando corretamente, verificar se todos 
 menos o d6 estão entrando em repouso sobre uma face (não um vertice ou  arresta) e que 
 a face esta paralela ao plano (não inclinada em relação a ele) no repouso.
 
+O problema é confirmado: a margem interna do Bullet (~0.04 m) é fixa e não configurável via 
+Python — ela arredonda qualquer poliedro com poucos vértices tornando vértices e arestas 
+pseudo-estáveis. A solução é detectar repouso errado pela altura do CM e aplicar uma pequena 
+perturbação angular para o dado cair na face correta.
+
+d8 e d20 ainda em repouso sobre vertice
+
 Dados estão entrando em repouso sobrepostos (a textura de um dado dentro da textura 
 de outro). A colisão precisa ser ajustada pra evitar isso.
 
