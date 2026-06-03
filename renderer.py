@@ -55,6 +55,15 @@ DICE_COLORS: dict[str, tuple[float, float, float]] = {
 }
 DEFAULT_DICE_COLOR = (0.7, 0.7, 0.7)
 
+DICE_VISUAL_SCALE: dict[str, float] = {
+    "d4":  1.0,
+    "d6":  1.0,
+    "d8":  1.0,
+    "d10": 1.2,
+    "d12": 1.0,
+    "d20": 1.0,  # d20 visualmente maior para destaque
+}
+
 
 # ────────────────────────────────────────────────────────────────────────────
 # DiceGpuObject — VAO/VBO/EBO de um único dado
@@ -232,7 +241,7 @@ class Renderer:
 
         # Compila shaders
         self.dice_prog   = build_dice_program()
-        self.ground_prog = build_ground_program()
+        # self.ground_prog = build_ground_program()
 
         # Cria objetos GPU para cada dado
         self.dice_gpu: list[DiceGpuObject] = []
@@ -310,7 +319,11 @@ class Renderer:
         # (matriz de rotação é ortogonal, então R⁻¹ = Rᵀ, e Rᵀᵀ = R)
         normal_mat = R33.astype(np.float32)
 
-        set_uniform_mat4(self.dice_prog,  "u_model",      M)
+        visual_scale = DICE_VISUAL_SCALE.get(gpu.dice_type, 1.0)
+        M_scaled = rd.model_mat.copy()
+        M_scaled[:3, :3] *= visual_scale   # escala só a parte rotação/escala
+        
+        set_uniform_mat4(self.dice_prog, "u_model", M_scaled)        
         set_uniform_mat3(self.dice_prog,  "u_normal_mat", normal_mat)
         set_uniform_vec3(self.dice_prog,  "u_dice_color", gpu.color)
         set_uniform_bool(self.dice_prog,  "u_highlight",  rd.is_resting)
@@ -340,4 +353,4 @@ class Renderer:
             gpu.delete()
         self.ground.delete()
         GL.glDeleteProgram(self.dice_prog)
-        GL.glDeleteProgram(self.ground_prog)
+        # GL.glDeleteProgram(self.ground_prog)

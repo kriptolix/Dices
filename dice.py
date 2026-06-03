@@ -14,7 +14,7 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Optional
 
-import pybullet as p
+import pybullet as pb
 
 from dice_mesh import DiceMesh, DiceType, get_mesh
 
@@ -68,13 +68,13 @@ class Dice:
 
     @property
     def position(self) -> np.ndarray:
-        pos, _ = p.getBasePositionAndOrientation(self.body_id)
+        pos, _ = pb.getBasePositionAndOrientation(self.body_id)
         return np.array(pos, dtype=np.float32)
 
     @property
     def orientation_quat(self) -> np.ndarray:
         """Quaternion [x, y, z, w] — formato nativo do PyBullet."""
-        _, orn = p.getBasePositionAndOrientation(self.body_id)
+        _, orn = pb.getBasePositionAndOrientation(self.body_id)
         return np.array(orn, dtype=np.float64)
 
     @property

@@ -175,10 +175,8 @@ class PhysicsWorld:
             angularDamping=0.01,
             rollingFriction=0.01,
             spinningFriction=0.02,
-            lateralFriction=1.5,
-            # CCD: raio = metade do tamanho do dado — detecta colisões dentro de um passo
-            ccdSweptSphereRadius=DICE_TARGET_SIZE * 0.25,
-            # Margem de contato: empurra os dados para fora quando sobrepostos
+            lateralFriction=1.5,            
+            ccdSweptSphereRadius=DICE_TARGET_SIZE * 0.25,           
             contactProcessingThreshold=0.0,
             physicsClientId=self.client
         )
@@ -205,6 +203,17 @@ class PhysicsWorld:
     # ------------------------------------------------------------------
     # Controle de simulação
     # ------------------------------------------------------------------
+
+    def resize_tray(self, half_w: float, half_d: float) -> None:
+        """Reconstrói as paredes da bandeja para o novo tamanho."""
+        for bid in self._static_ids:
+            pb.removeBody(bid, physicsClientId=self.client)
+        self._static_ids.clear()
+        # Salva novas dimensões e reconstrói
+        global TRAY_W, TRAY_D
+        TRAY_W = half_w * 2
+        TRAY_D = half_d * 2
+        self._build_tray()
 
     def create_dice_body(self, dice_type: str, position: tuple, scale: float = 1.0) -> int:
         """

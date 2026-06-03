@@ -221,7 +221,7 @@ class DiceGLArea(Gtk.GLArea):
         self._cam_eye    = np.array([0.0, 12.0, 0.0], dtype=np.float32)
         self._cam_center = np.array([0.0,  0.0, 0.0], dtype=np.float32)
         self._cam_up     = np.array([0.0,  0.0,-1.0], dtype=np.float32)
-        self._cam_fov    = 45.0
+        self._cam_fov    = 35.0
         self._cam_near   = 0.1
         self._cam_far    = 50.0
 
@@ -261,9 +261,15 @@ class DiceGLArea(Gtk.GLArea):
     # ── Sinais GTK/GL ────────────────────────────────────────────────
 
     def _on_resize(self, _area, width: int, height: int) -> None:
-        """Recebe dimensões em pixels físicos (já corrigidas pelo GTK para HiDPI)."""
-        self._vp_w = max(width,  1)
+        self._vp_w = max(width, 1)
         self._vp_h = max(height, 1)
+        # Recalcula limites da bandeja física com base no frustum da câmera
+        # Câmera está a Y=12, FOV=45°. Half-height no chão:
+        import math
+        half_h = math.tan(math.radians(self._cam_fov / 2)) * self._cam_eye[1]
+        aspect = self._vp_w / self._vp_h
+        half_w = half_h * aspect
+        self.physics.resize_tray(half_w * 0.95, half_h * 0.95)
 
     def _view_matrix(self) -> np.ndarray:
         return look_at(self._cam_eye, self._cam_center, self._cam_up)

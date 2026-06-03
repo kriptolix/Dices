@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
-import pybullet as p
+import pybullet as pb
 
 from dice import Dice
 
@@ -122,7 +122,7 @@ class DiceState:
     @classmethod
     def create(cls, dice: Dice) -> "DiceState":
         """Cria estado inicial para um dado já registrado no PyBullet."""
-        _, orn = p.getBasePositionAndOrientation(dice.body_id)
+        _, orn = pb.getBasePositionAndOrientation(dice.body_id)
         return cls(
             dice=dice,
             prev_orientation=np.array(orn, dtype=np.float64),
@@ -133,7 +133,7 @@ class DiceState:
     @property
     def orientation_quat(self) -> np.ndarray:
         """Quaternion atual [x,y,z,w] lido do PyBullet."""
-        _, orn = p.getBasePositionAndOrientation(self.dice.body_id)
+        _, orn = pb.getBasePositionAndOrientation(self.dice.body_id)
         return np.array(orn, dtype=np.float64)
 
     @property
@@ -143,12 +143,12 @@ class DiceState:
 
     @property
     def linear_velocity(self) -> np.ndarray:
-        lin, _ = p.getBaseVelocity(self.dice.body_id)
+        lin, _ = pb.getBaseVelocity(self.dice.body_id)
         return np.array(lin, dtype=np.float64)
 
     @property
     def angular_velocity(self) -> np.ndarray:
-        _, ang = p.getBaseVelocity(self.dice.body_id)
+        _, ang = pb.getBaseVelocity(self.dice.body_id)
         return np.array(ang, dtype=np.float64)
 
     # ── estabilização ────────────────────────────────────────────────

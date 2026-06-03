@@ -95,8 +95,9 @@ void main() {
 
     vec3 color = u_ambient * base_color
                + diff * u_light_color * base_color
-               + spec * u_light_color * 0.5;
+               + spec * u_light_color * 0.25;
 
+    color = pow(color, vec3(1.0/2.2));
     frag_color = vec4(color, 1.0);
 }
 """

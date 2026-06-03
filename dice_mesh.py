@@ -368,7 +368,6 @@ def _build_d8() -> DiceMesh:
         face_values=(1, 2, 3, 4, 5, 6, 7, 8),
     )
 
-
 def _build_d10() -> DiceMesh:
     """
     Trapezoedro pentagonal — d10.
@@ -424,7 +423,6 @@ def _build_d10() -> DiceMesh:
         normals=normals,
         face_values=(1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
     )
-
 
 def _build_d12() -> DiceMesh:
     """
@@ -502,7 +500,6 @@ def _build_d12() -> DiceMesh:
         normals=normals,
         face_values=(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12),
     )
-
 
 def _build_d20() -> DiceMesh:
     """

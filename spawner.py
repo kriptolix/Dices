@@ -7,14 +7,6 @@ Responsabilidade: criar e lançar um conjunto de dados com:
   - Separação mínima garantida ao nascer
   - Velocidades e torques iniciais variados (movimento natural)
   - Seed opcional para reprodutibilidade
-
-Diferenças em relação à versão Verlet
-──────────────────────────────────────
-  - PhysicsWorld (PyBullet) no lugar de VerletPhysics
-  - Velocidades em m/s (padrão SI do PyBullet) no lugar de unidades/passo
-  - Lançamento via p.resetBaseVelocity — sem apply_launch_impulse_3d/forces.py
-  - Torque inicial via resetBaseVelocity(angularVelocity=...) no lugar de
-    apply_random_torque
 """
 
 from __future__ import annotations
@@ -104,9 +96,9 @@ class SpawnResult:
     seed_used: Optional[int]
 
 
-# ────────────────────────────────────────────────────────────────────────────
-# Posicionamento com separação mínima  (inalterado em relação à versão Verlet)
-# ────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────
+# Posicionamento com separação mínima 
+# ────────────────────────────────────
 
 def _place_positions(
     n: int,
@@ -148,6 +140,7 @@ def _least_crowded_in_disk(
     rng: np.random.Generator,
     samples: int = 40,
 ) -> np.ndarray:
+    
     best_pos  = np.array([cx, cz])
     best_dist = -1.0
     for _ in range(samples):
@@ -171,6 +164,7 @@ def _push_apart(
     max_radius: float,
     iterations: int = 8,
 ) -> list[np.ndarray]:
+    
     pos    = [p_.copy() for p_ in positions]
     center = np.array([cx, cz])
     n      = len(pos)

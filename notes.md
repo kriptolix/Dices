@@ -8,28 +8,112 @@ pybullet
 pygobject
 simpleaudio
 
-## Problemas, 
+## Problemas 
 
-* o scenario so aparece ao clicar em rolar, não é um problema mas é incomodo
-* normalizar tamanho visual dos dados
 * adicionar capacidades de carregamento de texturas
 * audio com simpleaudio
-
-import simpleaudio as sa
-
-class SoundBank:
-    def __init__(self, files):
-        self.sounds = {
-            name: sa.WaveObject.from_wave_file(path)
-            for name, path in files.items()
-        }
-
-    def play(self, name):
-        self.sounds[name].play()
 
 ## Decisões
 
 em physics._make_collision_shape, r = DICE_TARGET_SIZE, o valor antigo era a metade mas dava muitos problemas de colisão. Futuramente cada dado deve ter um valor separado, assim o ajuste mais fino é possível
+
+## Correções
+
+### Melhorias
+
+1. Rim Light (alto retorno)
+
+Adicione um brilho sutil nas bordas voltadas para longe da câmera.
+
+float rim = 1.0 - max(dot(N, V), 0.0);
+rim = pow(rim, 3.0);
+
+color += rim * vec3(0.3, 0.3, 0.4);
+
+Isso dá volume e destaca a silhueta do dado.
+
+2. Hemispheric Lighting
+
+Em vez de um ambient constante:
+
+float hemi = N.y * 0.5 + 0.5;
+
+vec3 sky    = vec3(0.5, 0.6, 0.8);
+vec3 ground = vec3(0.15, 0.12, 0.1);
+
+vec3 ambient = mix(ground, sky, hemi);
+
+As sombras ficam muito mais agradáveis.
+
+3. Toon/Soft Diffuse
+
+Substituir o Lambert puro:
+
+float diff = max(dot(N,L),0.0);
+diff = smoothstep(0.0, 1.0, diff);
+
+ou
+
+diff = diff * diff * (3.0 - 2.0 * diff);
+
+Reduz a sensação de iluminação "seca".
+
+4. Fresnel
+
+Muito usado em materiais estilizados.
+
+float fresnel = pow(1.0 - max(dot(N,V),0.0), 5.0);
+
+color += fresnel * vec3(0.15);
+
+Dá uma sensação de material mais rico.
+
+5. Oren-Nayar (substitui Lambert)
+
+É um modelo difuso mais suave para superfícies rugosas.
+
+Visualmente costuma parecer melhor que Lambert mesmo sem PBR.
+
+6. Gradiente procedural no dado
+
+Sem textura:
+
+float h = v_frag_pos.y;
+vec3 base = mix(colorA, colorB, h);
+
+ou baseado na normal:
+
+vec3 base = mix(darkColor, lightColor, N.y*0.5+0.5);
+
+### Testes a fazer
+
+1. Reduzir a intensidade especular
+
++ spec * u_light_color * 0.15;
+
+2. Aplicar um limite suave
+
+spec = pow(max(dot(N, H), 0.0), u_shininess);
+spec = smoothstep(0.2, 1.0, spec);
+
+3. Aumentar a luz ambiente
+Se hoje ela é algo como:
+
+u_ambient = (0.1, 0.1, 0.1)
+
+experimente:
+
+u_ambient = (0.25, 0.25, 0.25)
+
+Isso reduz o contraste excessivo das sombras.
+
+4. Gamma correction
+Se você ainda não faz:
+
+color = pow(color, vec3(1.0/2.2));
+
+antes do frag_color.
+
 
 ## Construção de detecção de colisões para tocar sons.
 

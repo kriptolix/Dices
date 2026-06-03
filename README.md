@@ -41,30 +41,6 @@ A camada de interface gráfica é responsável apenas por:
 * Fornecer o contexto OpenGL
 * Processar eventos de entrada
 
-## Instalação
-
-Ou diretamente do repositório:
-
-```bash
-git clone https://github.com/seuusuario/pydice3d.git
-cd pydice3d
-pip install .
-```
-
-## Exemplo Básico
-
-```python
-from pydice3d import DiceEngine
-
-engine = DiceEngine()
-
-engine.add_dice("d20")
-engine.roll()
-
-while engine.is_running():
-    engine.update()
-```
-
 ## Aplicação de Demonstração
 
 O repositório inclui uma interface GTK utilizada para:
@@ -97,7 +73,7 @@ Sempre que exigido pelas respectivas licenças, os créditos são mantidos e dis
 
 ## Status
 
-O projeto encontra-se em desenvolvimento ativo.
+O projeto encontra-se em desenvolvimento ativo mas pode estar em estado de inconsistência.
 
 Contribuições, sugestões e relatos de problemas são bem-vindos.
 
