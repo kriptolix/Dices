@@ -76,25 +76,6 @@ COL_MASK_COLD  = 0b111          # cold colide com tudo
 # se espalharem sem se empurrarem explosivamente ao nascer.
 WARM_FRAMES = 30
 
-# Separação mínima de spawn por tipo (diâmetro do bounding sphere × 1.15)
-_SPAWN_SEP: dict[str, float] = {
-    "d4":     1.6,
-    "d6":     2.0,   # d6 é o maior em termos de caixa
-    "d8":     1.7,
-    "d10":    1.7,
-    "d12":    1.8,
-    "d20":    1.8,
-    "d100":   1.7,
-    "df": 2.0,
-}
-_DEFAULT_SEP = 2.0
-
-
-# ---------------------------------------------------------------------------
-# Utilitário: posições de spawn sem interpenetração
-# ---------------------------------------------------------------------------
-
-
 # ---------------------------------------------------------------------------
 # PhysicsWorld
 # ---------------------------------------------------------------------------
@@ -168,7 +149,7 @@ class PhysicsWorld:
         pb.changeDynamics(
             floor_id, -1,
             restitution=0.45,          # quica com naturalidade, como dado de resina em mesa
-            lateralFriction=0.9,       # atrito moderado: rola bem, não desliza demais
+            lateralFriction=1.2,       # atrito moderado: rola bem, não desliza demais
             physicsClientId=self.client,
         )
 
@@ -279,9 +260,9 @@ class PhysicsWorld:
                 random.uniform(-8.0, -6.0),
             ],
             angularVelocity=[
-                random.uniform(-10, 10),
-                random.uniform(-10, 10),
-                random.uniform(-10, 10),
+                random.uniform(-8, 8),
+                random.uniform(-8, 8),
+                random.uniform(-8, 8),
             ],
             physicsClientId=self.client,
         )

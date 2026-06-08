@@ -384,6 +384,10 @@ def _build_d10() -> DiceMesh:
     # Vértices pré-calculados (normalizados, raio máximo = 1.0)
     # Índices 0-9: anel equatorial (alternado +y/-y)
     # Índice 10: polo superior (+Y), índice 11: polo inferior (-Y)
+
+    POLE_HEIGHT = 0.70
+    RADIUS_SCALE = 1.0
+
     vertices = np.array([
         [ 0.44721360,  0.10557281,  0.32491970],  #  0
         [ 0.17082039, -0.10557281,  0.52573111],  #  1
@@ -398,6 +402,18 @@ def _build_d10() -> DiceMesh:
         [ 0.00000000,  1.00000000,  0.00000000],  # 10 polo sup
         [ 0.00000000, -1.00000000,  0.00000000],  # 11 polo inf
     ], dtype=float)
+
+    vertices[10] = (
+        0.0,
+        POLE_HEIGHT,
+        0.0
+    )
+
+    vertices[11] = (
+        0.0,
+        -POLE_HEIGHT,
+        0.0
+    )
 
     # 10 faces kite — cada uma com vértice agudo (36°) no polo,
     # dois vértices de 108° nos lados e um vértice de 108° na base.
