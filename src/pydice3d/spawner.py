@@ -71,7 +71,7 @@ class SpawnConfig:
                     (substitui elev_min/elev_max da versão anterior)
     torque_max    : magnitude máxima do torque inicial (rad/s)
     """
-    spawn_height:      float = 2.5
+    spawn_height:      float = 1.8
     spawn_cluster_xz:  tuple = (0.0, 3.5)   # fundo da bandeja — preserva efeito de arremesso
     cluster_radius:    float = 4.0           # levemente maior para facilitar separação
     min_separation:    float = 2.2

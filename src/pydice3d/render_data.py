@@ -124,20 +124,27 @@ def _face_uvs(vertices: np.ndarray, face: list[int],
     return np.stack([u_coords, v_coords], axis=1).astype(np.float32)
 
 
-# ── d4: sub-triângulos por canto ─────────────────────────────────────────────
-# Cada face triangular é dividida em 3 sub-triângulos via centróide.
-# Sub-triângulo k contém o canto k e seus dois vizinhos de aresta.
+# ── d4: sub-triângulos por aresta ────────────────────────────────────────────
+# No d4 real, cada face exibe o mesmo número em cada uma de suas 3 arestas,
+# orientado de modo que o número fique legível quando visto "de baixo para
+# cima" a partir dessa aresta (i.e. perpendicular à aresta, apontando para
+# o interior da face).
 #
-#   sub 0: [v0, v1, centróide]  → domínio do canto 0
-#   sub 1: [v1, v2, centróide]  → domínio do canto 1
-#   sub 2: [v2, v0, centróide]  → domínio do canto 2
+# Convenção: sub-triângulo k corresponde à ARESTA oposta ao vértice k.
 #
-# Os UVs de cada sub-triângulo são calculados com origem no "draw_center"
-# do canto (a _D4_CORNER_DIST do canto em direção ao interior), com
-# eixo U apontando do canto para o midpoint da aresta oposta.
+#   aresta k = [v_{k+1}, v_{k+2}]   (os dois vértices que NÃO são v_k)
+#   sub k    = [v_{k+1}, v_{k+2}, centróide]
+#
+# O glifo é centralizado no midpoint da aresta, com:
+#   U-axis: ao longo da aresta (de v_{k+1} para v_{k+2}), para que o número
+#           fique paralelo à aresta e "de pé" em relação ao interior.
+#   V-axis: perpendicular a U no plano da face, apontando para o interior
+#           (de mid_aresta → centróide).
+#
+# O número exibido no sub-triângulo k da face fi é o valor da face oposta
+# ao vértice global face[k] — calculado em _from_state_d4.
 
-_D4_CORNER_DIST  = 0.25   # fração da distância canto→interior onde fica o centro do glifo
-_D4_GLYPH_SCALE  = 3.0   # escala do glifo dentro do sub-triângulo
+_D4_GLYPH_SCALE      = 6.5    # escala do glifo em relação ao comprimento da aresta
 
 
 def _d4_subtri_data(vertices: np.ndarray, face: list[int],
@@ -146,8 +153,9 @@ def _d4_subtri_data(vertices: np.ndarray, face: list[int],
     """
     Retorna lista de 3 tuplas (positions (3,3), uvs (3,2)) — uma por sub-triângulo.
 
-    Sub-triângulo k = [v_k, v_{k+1}, centróide].
-    UVs centrados no draw_center do canto k.
+    Sub-triângulo k cobre a aresta oposta ao vértice k:
+        vértices do sub = [v_{k+1}, v_{k+2}, centróide]
+    UVs centrados no draw_center sobre a aresta, com U ao longo da aresta.
     """
     assert len(face) == 3
     pts      = vertices[face].astype(np.float64)   # (3, 3)
@@ -157,32 +165,50 @@ def _d4_subtri_data(vertices: np.ndarray, face: list[int],
 
     result = []
     for k in range(3):
-        vk   = pts[k]
-        vk1  = pts[(k + 1) % 3]
-        # Sub-triângulo: vk, vk1, centróide
-        sub_pts = np.array([vk, vk1, centroid])   # (3, 3)
+        # Aresta oposta ao vértice k
+        va = pts[(k + 1) % 3]
+        vb = pts[(k + 2) % 3]
+        mid_edge = (va + vb) * 0.5
 
-        # Eixo U do canto k: canto → midpoint aresta oposta
-        opp_mid = (pts[(k + 1) % 3] + pts[(k + 2) % 3]) * 0.5
-        u_axis  = opp_mid - vk
-        u_axis  = u_axis - np.dot(u_axis, n) * n
-        u_len   = np.linalg.norm(u_axis)
+        # Sub-triângulo cobre a região da aresta: [va, vb, centróide]
+        sub_pts = np.array([va, vb, centroid])     # (3, 3)
+
+        # Eixo U: ao longo da aresta (va → vb), projetado no plano da face
+        u_axis = vb - va
+        u_axis = u_axis - np.dot(u_axis, n) * n
+        u_len  = np.linalg.norm(u_axis)
         if u_len < 1e-9:
             u_axis = np.array([1.0, 0.0, 0.0])
         else:
             u_axis = u_axis / u_len
 
+        # Eixo V: perpendicular a U no plano, apontando para o interior da face
         v_axis = np.cross(n, u_axis)
         v_axis = v_axis / (np.linalg.norm(v_axis) + 1e-15)
+        # Garante que V aponta de mid_edge → centróide (interior)
+        if np.dot(v_axis, centroid - mid_edge) < 0:
+            v_axis = -v_axis
 
-        span       = np.linalg.norm(opp_mid - vk)
-        if span < 1e-9:
-            span = 1.0
-        draw_center = vk + u_axis * span * _D4_CORNER_DIST
+        edge_len = np.linalg.norm(vb - va)
+        if edge_len < 1e-9:
+            edge_len = 1.0
 
+        # O shader desenha o glifo na faixa v_uv.y ∈ [-1, +1].
+        # Para que a metade 'inferior' do glifo (v < 0, além da aresta) não
+        # seja clipada pelo limite do sub-triângulo, o draw_center precisa
+        # estar pelo menos half_glyph_world para dentro da aresta:
+        #   half_glyph_world = edge_len / _D4_GLYPH_SCALE
+        half_glyph  = edge_len / _D4_GLYPH_SCALE  # metade do glifo no mundo
+        inward_safe = half_glyph * 0.90            # 15 % de margem extra
+        # Não ultrapassa 65 % do caminho até o centróide
+        inward_max  = np.linalg.norm(centroid - mid_edge) * 0.65
+        inward      = min(inward_safe, inward_max)
+        draw_center = mid_edge + v_axis * inward
+
+        # UVs: normalizados pelo comprimento da aresta para escala consistente
         local    = sub_pts - draw_center
-        u_coords = (local @ u_axis) / span * _D4_GLYPH_SCALE
-        v_coords = (local @ v_axis) / span * _D4_GLYPH_SCALE
+        u_coords = (local @ u_axis) / edge_len * _D4_GLYPH_SCALE
+        v_coords = (local @ v_axis) / edge_len * _D4_GLYPH_SCALE
 
         uvs = np.stack([u_coords, v_coords], axis=1).astype(np.float32)
         result.append((sub_pts.astype(np.float32), uvs))
@@ -262,7 +288,11 @@ class DiceRenderData:
     def _from_state_d4(cls, state: "DiceState") -> "DiceRenderData":
         """
         Cada face triangular é dividida em 3 sub-triângulos (via centróide).
-        Sub-triângulo k: [v_k, v_{k+1}, centróide], com UVs do canto k.
+        Sub-triângulo k cobre a ARESTA oposta ao vértice local k:
+            sub k = [v_{k+1}, v_{k+2}, centróide]
+        O glifo exibido na aresta k de fi é o valor da face oposta ao
+        vértice global face[k] — ou seja, a face cujo índice é face[k]
+        (pois no tetraedro a face fi é oposta ao vértice global fi).
         face_idx = fi*3 + k  →  face_glyphs expandido para 12 entradas.
         """
         mesh      = state.dice.mesh
@@ -271,13 +301,31 @@ class DiceRenderData:
         base_glyphs = build_face_glyphs(dice_type, list(mesh.face_values))
         glyph_color = _choose_glyph_color(dice_type)
 
+        # Monta tabela: vértice global v → índice da face oposta a v
+        # No tetraedro padrão: face fi é oposta ao vértice fi.
+        # Isso é verdade pela construção de _build_d4 (face i não contém vértice i).
+        # Verificamos explicitamente para robustez.
+        n_faces = len(mesh.faces)
+        vert_to_opposite_face: dict[int, int] = {}
+        all_verts = set(range(mesh.num_vertices))
+        for fi, face in enumerate(mesh.faces):
+            face_set = set(face)
+            missing = all_verts - face_set
+            for v in missing:
+                vert_to_opposite_face[v] = fi
+
         # 12 slots: fi*3+k para fi=0..3, k=0..2
+        # Aresta k da face fi é oposta ao vértice local k → vértice global face[k].
+        # O glifo dessa aresta = valor da face oposta ao vértice global face[k].
         expanded_glyphs: list[int] = [GLYPH_NONE] * MAX_FACES
-        for fi, g in enumerate(base_glyphs):
+        for fi, face in enumerate(mesh.faces):
             for k in range(3):
-                slot = fi * 3 + k
+                global_vert = face[k]
+                opp_fi = vert_to_opposite_face.get(global_vert, fi)
+                glyph  = base_glyphs[opp_fi] if opp_fi < len(base_glyphs) else GLYPH_NONE
+                slot   = fi * 3 + k
                 if slot < MAX_FACES:
-                    expanded_glyphs[slot] = g
+                    expanded_glyphs[slot] = glyph
 
         # 4 faces × 3 sub-triângulos × 3 vértices = 36 vértices
         vb = np.zeros((36, 9), dtype=np.float32)
@@ -303,8 +351,9 @@ class DiceRenderData:
 
 
 def _choose_glyph_color(dice_type: str) -> tuple:
-    from pydice3d.renderer import DICE_COLORS, DEFAULT_DICE_COLOR
-    r, g, b = DICE_COLORS.get(dice_type, DEFAULT_DICE_COLOR)
+    from pydice3d.renderer import DICE_COLORS, DEFAULT_DICE_COLOR, DICE_THEMES
+    # r, g, b = DICE_COLORS.get(dice_type, DEFAULT_DICE_COLOR)
+    r, g, b = DICE_THEMES.get("light", DEFAULT_DICE_COLOR)
     luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
     if luminance > 0.5:
         return (0.08, 0.08, 0.10)

@@ -1,35 +1,11 @@
 """
-physics.py — Simulação física dos dados via PyBullet.
+physics.py — Physical simulation of data via PyBullet.
 
-Responsabilidades:
-  - Construção da bandeja estática (piso + paredes)
-  - Criação e destruição de corpos rígidos dos dados
-  - Shapes de colisão por tipo (D4–D20)
-  - Stepping da simulação e detecção de repouso
-
-Correções de lançamento (v2)
-─────────────────────────────
-Problema original: dados saíam da bandeja, especialmente o d6.
-Causas identificadas:
-  1. Interpenetração garantida ao nascer: todos os dados nasciam no mesmo Z
-     (z = TRAY_D * 0.45) com X variando em apenas ±2.6m. Com d6 precisando
-     de 2.2m de separação, havia colisões explosivas antes do primeiro frame.
-  2. Velocidade vertical positiva (vy = +0.5..1.0) somada ao ricochete do
-     chão (restitution=0.45) lançava dados acima das paredes.
-  3. O spawner.py chamava resetBaseVelocity duas vezes por dado (add_dice +
-     _apply_launch), o segundo sobrescrevendo o primeiro corretamente — mas
-     quando glarena.py chamava add_dice diretamente, só o primeiro rodava.
-
-Correções:
-  - Posições de spawn distribuídas em grade 2D (X e Z variados), com
-    separação mínima garantida por tipo.
-  - vy inicial = 0 (dados nascem "parados" verticalmente, só com impulso
-    horizontal para dentro da bandeja).
-  - Velocidade horizontal (vz) reduzida e limitada para não ultrapassar
-    a parede oposta.
-  - Restitution do chão reduzida de 0.45 → 0.30 para amortecimento mais
-    realista (dado de resina, não bola de borracha).
-  - linearDamping aumentado de 0.01 → 0.08 para absorver energia extra.
+Responsibilities:
+- Construction of the static tray (floor + walls)
+- Creation and destruction of rigid bodies in the data
+- Collision shapes by data type
+- Simulation stepping and rest detection
 """
 
 import pybullet as pb
@@ -40,40 +16,39 @@ import numpy as np
 
 from pydice3d.dice_mesh import get_mesh
 
-# Dimensões da bandeja (em metros do Bullet)
-TRAY_W  = 13.0   # largura X
-TRAY_D  = 12.0    # profundidade Z
-TRAY_H  = 0.15   # espessura do piso
-WALL_H  = 9.0    # altura das paredes
-WALL_T  = 0.6    # espessura das paredes
+# Tray dimensions (in meters of the Bullet)
+TRAY_W  = 13.0   
+TRAY_D  = 12.0    
+TRAY_H  = 0.15   
+WALL_H  = 9.0    
+WALL_T  = 0.6    
 
-# Tamanho alvo do dado no mundo físico (em metros)
+# Target size of the data in the physical world (in meters)
 DICE_TARGET_SIZE = 1.0
 
-# Altura de spawn — suficiente para não colidir com o chão antes do impulso,
-# mas baixa o suficiente para não ganhar energia cinética excessiva na queda.
-LAUNCH_Y = 2.0
+# Spawn height 
+LAUNCH_Y = 1.8
 
-# Timestep fixo da simulação Bullet
+# Fixed timestep for Bullet simulation
 SIM_TIMESTEP = 1.0 / 240.0
-# Sub-passos por chamada de step
+# Substeps per step call
 SIM_SUBSTEPS = 6
 
-# Grupos de colisão (bitmask)
-#   TRAY  : colide com todos
-#   WARM  : dado recém-criado — colide com bandeja mas NÃO com outros dados
-#   COLD  : dado estabilizado — colide com tudo normalmente
+# Collision groups (bitmask)
+# TRAY: collides with all
+# WARM: newly created data — collides with the tray but NOT with other data
+# COLD: stabilized data — collides with everything normally
 COL_GROUP_TRAY = 0b001
 COL_GROUP_WARM = 0b010
 COL_GROUP_COLD = 0b100
 
-COL_MASK_TRAY  = 0b111          # bandeja colide com warm + cold
-COL_MASK_WARM  = COL_GROUP_TRAY # warm só colide com bandeja
-COL_MASK_COLD  = 0b111          # cold colide com tudo
+COL_MASK_TRAY  = 0b111          
+COL_MASK_WARM  = COL_GROUP_TRAY 
+COL_MASK_COLD  = 0b111          
 
-# Quantos frames (de step()) cada dado fica no grupo WARM antes de ser promovido.
-# 30 frames × 6 substeps × (1/240s) ≈ 0.75 s — tempo suficiente para os dados
-# se espalharem sem se empurrarem explosivamente ao nascer.
+# How many frames (of step()) does each die spend in the WARM group before being promoted?
+# 30 frames × 6 substeps × (1/240s) ≈ 0.75 s — enough time for the dice
+# to spread out without explosively pushing each other at birth.
 WARM_FRAMES = 30
 
 # ---------------------------------------------------------------------------
@@ -148,8 +123,8 @@ class PhysicsWorld:
         floor_id = self._static_box([hw, ht, hd], [0, -ht, 0])
         pb.changeDynamics(
             floor_id, -1,
-            restitution=0.45,          # quica com naturalidade, como dado de resina em mesa
-            lateralFriction=1.2,       # atrito moderado: rola bem, não desliza demais
+            restitution=0.45,          
+            lateralFriction=1.2,       
             physicsClientId=self.client,
         )
 
@@ -163,13 +138,13 @@ class PhysicsWorld:
             wall = self._static_box(he, pos)
             pb.changeDynamics(
                 wall, -1,
-                restitution=0.65,      # ← paredes mais "mortas" que o chão
+                restitution=0.65,     
                 lateralFriction=0.5,
                 physicsClientId=self.client,
             )
 
     # ------------------------------------------------------------------
-    # Criação de dados
+    # Dice creation
     # ------------------------------------------------------------------
 
     def _make_collision_shape(self, dice_type: str) -> int:
@@ -182,6 +157,9 @@ class PhysicsWorld:
                 halfExtents=[half, half, half],
                 physicsClientId=self.client,
             )
+        
+        if dice_type in ("d10", "d100"):
+            r = DICE_TARGET_SIZE * 1.65
 
         mesh  = get_mesh(dice_type)
         verts = (mesh.vertices * r).tolist()
@@ -227,9 +205,9 @@ class PhysicsWorld:
 
         pb.changeDynamics(
             body, -1,
-            restitution=0.35,           # quica normalmente contra chão e paredes
-            linearDamping=0.03,         # resistência do ar leve — não "engole" a jogada
-            angularDamping=0.03,        # rola livremente
+            restitution=0.35,           
+            linearDamping=0.02,         # resistência do ar leve — não "engole" a jogada
+            angularDamping=0.02,        # rola livremente
             rollingFriction=0.03,
             spinningFriction=0.03,
             lateralFriction=0.8,
@@ -247,10 +225,7 @@ class PhysicsWorld:
             COL_GROUP_WARM, COL_MASK_WARM,
             physicsClientId=self.client,
         )
-        self._warm_frames[body] = WARM_FRAMES
-
-        vz_in   = random.uniform(-6.5, -5.0)   # para dentro (-Z), moderado
-        vx_side = random.uniform(-1.0,  1.0)   # leve desvio lateral
+        self._warm_frames[body] = WARM_FRAMES        
 
         pb.resetBaseVelocity(
             body,
@@ -276,7 +251,7 @@ class PhysicsWorld:
     # ------------------------------------------------------------------
 
     def resize_tray(self, half_w: float, half_d: float) -> None:
-        """Reconstrói as paredes da bandeja para o novo tamanho."""
+        """Rebuild the tray walls to the new size."""
         for bid in self._static_ids:
             pb.removeBody(bid, physicsClientId=self.client)
         self._static_ids.clear()
@@ -305,7 +280,7 @@ class PhysicsWorld:
         for _ in range(SIM_SUBSTEPS):
             pb.stepSimulation(physicsClientId=self.client)
 
-        # Promove dados WARM → COLD após WARM_FRAMES frames
+        # Promotes WARM → COLD dice after WARM_FRAMES frames
         graduated = [bid for bid, n in self._warm_frames.items() if n <= 1]
         for bid in graduated:
             pb.setCollisionFilterGroupMask(

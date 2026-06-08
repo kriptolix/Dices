@@ -2,83 +2,54 @@
 
 > Physics-based 3D polyhedral dice simulation library for Python
 
-pydice3d é uma biblioteca focada na simulação física e renderização de dados poliédricos utilizados em jogos de RPG e aplicações similares. O projeto foi desenvolvido para ser independente de frameworks de interface gráfica, permitindo integração com GTK, Qt, Pygame ou qualquer outra solução capaz de fornecer um contexto OpenGL.
+Pydice3d is a library focused on the physical simulation and rendering of polyhedral dice commonly used in tabletop RPGs and similar applications. The project was designed to be independent of any graphical user interface framework, allowing integration with GTK, Qt, Pygame, or any other solution capable of providing an OpenGL context.
 
-O repositório inclui uma aplicação GTK utilizada para testes, desenvolvimento e demonstração das funcionalidades da biblioteca, mas a interface gráfica não faz parte do núcleo do projeto.
+## Features
 
-## Características
+* Physics simulation powered by PyBullet
+* OpenGL rendering
+* Support for polyhedral dice (d4, d6, d8, d10, d12, d20, d100, and fudge dice)
+* GUI toolkit-independent architecture
+* Simple integration with existing applications
 
-* Simulação física baseada em PyBullet
-* Renderização OpenGL
-* Suporte a dados poliédricos (d4, d6, d8, d10, d12, d20 e fudge dice)
-* Carregamento de malhas OBJ
-* Suporte a texturas
-* Reprodução de efeitos sonoros
-* Arquitetura independente de toolkit gráfico
-* Integração simples com aplicações existentes
+## Roadmap
 
-## Arquitetura
+* OBJ mesh loading
+* Texture support
+* Sound effect playback
 
-O projeto é dividido em camadas independentes:
+## Architecture
 
-```text
-+-----------------------+
-| GTK / Qt / Pygame     |
-+-----------------------+
-| OpenGL Renderer       |
-+-----------------------+
-| Scene Management      |
-+-----------------------+
-| PyBullet Physics      |
-+-----------------------+
-```
+The library contains all simulation, scene management, rendering, and audio logic.
 
-A biblioteca concentra toda a lógica de simulação, gerenciamento de cena, renderização e áudio.
+The graphical user interface layer is only responsible for:
 
-A camada de interface gráfica é responsável apenas por:
+* Creating the application window
+* Providing an OpenGL context
+* Processing input events
 
-* Criar a janela
-* Fornecer o contexto OpenGL
-* Processar eventos de entrada
+## Demonstration Application
 
-## Aplicação de Demonstração
+The repository includes a GTK-based interface used for:
 
-O repositório inclui uma interface GTK utilizada para:
+* Manual testing
+* Feature development
+* Physics tuning
+* Visual validation
 
-* Testes manuais
-* Desenvolvimento de funcionalidades
-* Ajustes de física
-* Validação visual
-
-Ela não é necessária para utilizar a biblioteca.
-
-## Assets
-
-O projeto utiliza modelos, texturas e efeitos sonoros de terceiros.
-
-As informações de autoria e licenciamento encontram-se em:
-
-```text
-THIRD_PARTY_LICENSES.md
-```
-
-Sempre que exigido pelas respectivas licenças, os créditos são mantidos e distribuídos juntamente com o projeto.
-
-## Objetivos
-
-* Fornecer uma biblioteca reutilizável para aplicações de RPG
-* Permitir integração com diferentes toolkits gráficos
-* Manter separação clara entre física, renderização e interface
-* Facilitar a criação de aplicações de rolagem de dados visualmente ricas
+It is not required to use the library.
 
 ## Status
 
-O projeto encontra-se em desenvolvimento ativo mas pode estar em estado de inconsistência.
+The project is currently under active development and is in an alpha stage.
 
-Contribuições, sugestões e relatos de problemas são bem-vindos.
+The architecture, APIs, and internal organization are evolving rapidly and may change significantly between releases. At this stage, the primary goal is experimentation, validation, and stabilization of the core design.
 
-## Licença
+Bug reports, feature suggestions, feedback end code contributions and pull requests will only be accepted once the project reaches a more stable state and the public APIs have settled. This policy is intended to avoid wasting contributor effort on code that may become obsolete as the project evolves.
 
-O código-fonte é distribuído sob a licença definida no arquivo LICENSE.
+## License
 
-Os assets de terceiros permanecem sob suas respectivas licenças.
+The source code is distributed under the AGPL license.
+
+
+

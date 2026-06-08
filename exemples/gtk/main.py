@@ -9,59 +9,59 @@ Responsabilidades:
 
 import gi
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk, GLib
+gi.require_version("Adw", "1")
+from gi.repository import Gtk, GLib, Adw
 
 import sys
 
 from pydice3d.physics import PhysicsWorld
 from glarena import DiceGLArea, DEBUG_NONE, DEBUG_COLLISION, DEBUG_OVERLAY
 
-# from dice_reader import start_calibration
 
-
-
-DICE_TYPES = ["d4", "d6", "d8", "d10", "d12", "d20"]
+DICE_TYPES = ["d4", "d6", "d8", "d10", "d12", "d20", "d100", "df"]
 
 
 class AppWindow(Gtk.ApplicationWindow):
     def __init__(self, app):
         super().__init__(
             application=app,
-            title="Rolador de Dados 3D — PyBullet + GTK4 + OpenGL",
+            title="3D Dice Roller — PyBullet + GTK4 + OpenGL",
         )
-        self.set_default_size(680, 600)        
+        self.set_default_size(680, 600)
+
+        self.style_manager = Adw.StyleManager.get_default()
+
+        self.theme = "light"
+        
+        if self.style_manager.get_dark():
+            self.theme = "dark"      
 
         self.physics = PhysicsWorld()
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         root.set_margin_top(10);    root.set_margin_bottom(10)
         root.set_margin_start(10);  root.set_margin_end(10)
-        self.set_child(root)
+        self.set_child(root)        
 
-        # Título
-        title = Gtk.Label(label="Rolador de Dados — Física Real")
-        title.add_css_class("title-2")
-        root.append(title)
-
-        # Área GL
+        # GL Area
         self.gl = DiceGLArea(self.physics)
         self.gl.set_size_request(660, 460)
         self.gl.set_vexpand(True)
         root.append(self.gl)
 
-        # ── Pool de dados ────────────────────────────────────────────
-        # Botões para adicionar cada tipo ao pool
+        # ── Dice Pool ────────────────────────────────────────────
+       
         add_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         add_row.set_halign(Gtk.Align.CENTER)
         root.append(add_row)
 
-        add_row.append(Gtk.Label(label="Adicionar:"))
+        add_row.append(Gtk.Label(label="Add:"))
         for dtype in DICE_TYPES:
             b = Gtk.Button(label=dtype.upper())
             b.connect("clicked", self._on_add_die, dtype)
             add_row.append(b)
 
-        # Linha de pool atual + botões de ação
+        # Buttons
         pool_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         pool_row.set_halign(Gtk.Align.CENTER)
         root.append(pool_row)
@@ -69,16 +69,16 @@ class AppWindow(Gtk.ApplicationWindow):
         self._pool_label = Gtk.Label(label="Pool: —")
         pool_row.append(self._pool_label)
 
-        btn_roll = Gtk.Button(label="Rolar")
+        btn_roll = Gtk.Button(label="Roll")
         btn_roll.add_css_class("suggested-action")
         btn_roll.connect("clicked", self._on_roll)
         pool_row.append(btn_roll)
 
-        btn_clear = Gtk.Button(label="✕  Limpar")
+        btn_clear = Gtk.Button(label="✕  Clear")
         btn_clear.connect("clicked", self._on_clear_pool)
         pool_row.append(btn_clear)
 
-        # Pool interno: {tipo: quantidade}
+        # Internal Pool: {type: quantity}
         self._pool: dict[str, int] = {}
 
         # ── Debug ────────────────────────────────────────────────────
@@ -88,9 +88,9 @@ class AppWindow(Gtk.ApplicationWindow):
 
         debug_row.append(Gtk.Label(label="Debug:"))
         self._debug_btns: list[Gtk.ToggleButton] = []
-        for label, mode in [("Normal [N]", DEBUG_NONE),
-                             ("Só Colisão [C]", DEBUG_COLLISION),
-                             ("Overlay [O]", DEBUG_OVERLAY)]:
+        for label, mode in [("Standard", DEBUG_NONE),
+                             ("Collision", DEBUG_COLLISION),
+                             ("Overlay", DEBUG_OVERLAY)]:
             btn_d = Gtk.ToggleButton(label=label)
             if mode == DEBUG_NONE:
                 btn_d.set_active(True)
@@ -99,7 +99,7 @@ class AppWindow(Gtk.ApplicationWindow):
             debug_row.append(btn_d)
 
         # Status
-        self.status = Gtk.Label(label="Adicione dados ao pool e clique em Rolar.")
+        self.status = Gtk.Label(label="Add dice to pool and click roll.")
         self.status.add_css_class("dim-label")
         root.append(self.status)
 
@@ -137,18 +137,18 @@ class AppWindow(Gtk.ApplicationWindow):
 
     def _on_roll(self, _btn):
         if not self._pool:
-            self.status.set_label("Adicione dados ao pool primeiro.")
+            self.status.set_label("Add dice to pool first.")
             return
         
         summary = ", ".join(f"{q}×{t.upper()}" for t, q in sorted(self._pool.items()))
-        self.status.set_label(f"Rolando {summary}…")
+        self.status.set_label(f"Rolling {summary}…")
         self.gl.start_simulation(self._pool.copy())
         GLib.timeout_add(300, self._check_done)
 
     def _check_done(self) -> bool:
         if self.gl.simulating:
             return True
-        self.status.set_label("Dados parados. Role de novo!")
+        self.status.set_label("Dice stopped")
         return False
 
 

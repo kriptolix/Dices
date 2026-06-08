@@ -45,15 +45,22 @@ from pydice3d.shaders import (
 # Cores e escalas visuais por tipo de dado
 # ────────────────────────────────────────────────────────────────────────────
 
+DICE_THEMES: dict[str, tuple[float, float, float]] = {
+    "dark":    (0.15, 0.15, 0.15),   # black
+    "light":    (0.95, 0.95, 0.95),   # white
+}
+
+ACTUAL_THEME = "light"
+
 DICE_COLORS: dict[str, tuple[float, float, float]] = {
     "d4":     (0.85, 0.25, 0.25),   # vermelho
     "d6":     (0.25, 0.55, 0.90),   # azul
     "d8":     (0.25, 0.75, 0.40),   # verde
     "d10":    (0.90, 0.65, 0.15),   # laranja
-    "d12":    (0.70, 0.30, 0.85),   # roxo
-    "d20":    (0.92, 0.92, 0.92),   # branco/prata
+    "d12":    (0.15, 0.15, 0.15),   # roxo
+    "d20":    (0.95, 0.95, 0.95),   # branco/prata
     "d100":   (0.90, 0.65, 0.15),   # laranja (par com d10)
-    "dfudge": (0.20, 0.20, 0.20),   # quase preto
+    "df": (0.20, 0.20, 0.20),   # quase preto
 }
 DEFAULT_DICE_COLOR = (0.7, 0.7, 0.7)
 
@@ -62,11 +69,11 @@ DICE_VISUAL_SCALE: dict[str, float] = {
     "d4":     1.0,
     "d6":     1.00,
     "d8":     1.00,
-    "d10":    1.20,
-    "d12":    1.00,
-    "d20":    1.10,
-    "d100":   1.00,
-    "dfudge": 1.00,
+    "d10":    1.50,
+    "d12":    0.90,
+    "d20":    1.00,
+    "d100":   1.50,
+    "df": 1.00,
 }
 
 
@@ -88,7 +95,8 @@ class DiceGpuObject:
     def __init__(self, rd: DiceRenderData, dice_type: str) -> None:
         self.dice_type   = dice_type
         self.n_indices   = rd.n_indices
-        self.color       = DICE_COLORS.get(dice_type, DEFAULT_DICE_COLOR)
+        # self.color       = DICE_COLORS.get(dice_type, DEFAULT_DICE_COLOR)
+        self.color       = DICE_THEMES.get(ACTUAL_THEME, DEFAULT_DICE_COLOR)
         self.glyph_color = rd.glyph_color
         self.face_glyphs = _pad_glyphs(rd.face_glyphs)   # sempre MAX_FACES ints
 
@@ -309,6 +317,7 @@ class Renderer:
         cam_pos:  np.ndarray,
         width:    int,
         height:   int,
+        theme:    Optional[str] = "light",
     ) -> None:
         GL.glViewport(0, 0, width, height)
         GL.glClearColor(0.0, 0.0, 0.0, 0.0)

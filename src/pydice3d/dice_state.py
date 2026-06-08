@@ -208,11 +208,25 @@ class DiceState:
 
     @property
     def top_face_value(self) -> int:
+        if self.dice.dice_type == 'd4':
+            return self._d4_result_value()
         return self.dice.top_face_value(self.rotation_matrix)
 
     @property
     def top_face_index(self) -> int:
+        if self.dice.dice_type == 'd4':
+            return self._d4_result_index()
         return self.dice.top_face_index(self.rotation_matrix)
+
+    def _d4_result_index(self) -> int:
+        """No d4, o resultado é a face com normal mais apontada para BAIXO (Y-)."""
+        R = self.rotation_matrix
+        normals_world = self.dice.mesh.normals @ R.T
+        return int(np.argmin(normals_world[:, 1]))
+
+    def _d4_result_value(self) -> int:
+        fi = self._d4_result_index()
+        return int(self.dice.mesh.face_values[fi])
 
     @property
     def is_resting(self) -> bool:

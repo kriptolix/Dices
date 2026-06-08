@@ -98,6 +98,10 @@ class CollisionWireframe:
             return
 
         r = DICE_TARGET_SIZE   # mesmo valor usado em _make_collision_shape
+
+        if self.dice_type in ("d10", "d100"):
+            r = 1.5 * 1.1
+
         verts = self._get_hull_verts(r)
         edges = self._hull_edges(verts)
 
@@ -230,11 +234,7 @@ class DiceGLArea(Gtk.GLArea):
         self.connect("unrealize", self._on_unrealize)
         self.connect("render",    self._on_render)
         self.connect("resize",    self._on_resize)
-
-        # Captura de teclado para alternar debug
-        key_ctrl = Gtk.EventControllerKey()
-        key_ctrl.connect("key-pressed", self._on_key)
-        self.add_controller(key_ctrl)
+        
         self.set_focusable(True)
 
     # ── Propriedade debug_mode ────────────────────────────────────────
@@ -376,11 +376,7 @@ class DiceGLArea(Gtk.GLArea):
 
     def start_simulation(self, pool: dict[str, int]) -> None:
         """
-        Remove dados anteriores e inicia uma nova rolagem.
-
-        Parâmetros
-        ----------
-        pool : dicionário {dice_type: quantidade}, ex: {"d6": 2, "d20": 1}
+        Remove previous dice and start a new roll.     
         """
         self.make_current()
         if self.get_error():
@@ -438,25 +434,7 @@ class DiceGLArea(Gtk.GLArea):
     # ── Resultado ────────────────────────────────────────────────────
 
     def _on_roll_complete(self, result: RollResult) -> None:
-        """Chamado pelo RollMonitor quando todos os dados param."""
-        print(f"[RESULTADO] {result.summary()}")
+        """Called by RollMonitor when all dice stops."""
+        print(f"[RESULT] {result.summary()}")
         # A AppWindow detecta simulating=False via _check_done timeout
-
-    # ── Teclado (debug) ──────────────────────────────────────────────
-
-    def _on_key(self, _ctrl, keyval, _keycode, _state) -> bool:
-        from gi.repository import Gdk
-        key = Gdk.keyval_name(keyval)
-        if key == "n" or key == "N":
-            self.debug_mode = DEBUG_NONE
-            print("[DEBUG] Modo normal")
-            return True
-        if key == "c" or key == "C":
-            self.debug_mode = DEBUG_COLLISION
-            print("[DEBUG] Apenas colisão")
-            return True
-        if key == "o" or key == "O":
-            self.debug_mode = DEBUG_OVERLAY
-            print("[DEBUG] Overlay colisão+visual")
-            return True
-        return False
+    

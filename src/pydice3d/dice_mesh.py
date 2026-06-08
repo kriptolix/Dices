@@ -30,8 +30,8 @@ from dataclasses import dataclass
 from typing import Literal
 from scipy.spatial import ConvexHull
 
-DiceType = Literal["d4", "d6", "d8", "d10", "d12", "d20"]
-ALL_DICE: tuple[DiceType, ...] = ("d4", "d6", "d8", "d10", "d12", "d20")
+DiceType = Literal["d4", "d6", "d8", "d10", "d12", "d20", "d100", "df"]
+ALL_DICE: tuple[DiceType, ...] = ("d4", "d6", "d8", "d10", "d12", "d20", "d100", "df")
 
 
 @dataclass(frozen=True)
@@ -182,6 +182,7 @@ def _build_d4() -> DiceMesh:
 def _build_d4_beveled(bevel=0.15)-> DiceMesh:
 
     """
+    Não esta em uso.
     Cria um tetraedro chanfrado.
     1. Mantém as faces originais
     2. Adiciona vértices extras nas arestas
@@ -227,7 +228,7 @@ def _build_d4_beveled(bevel=0.15)-> DiceMesh:
 
     return vertices
 
-def _build_d6() -> DiceMesh:
+def _build_d6(df=False) -> DiceMesh:
     """
     Cubo — d6.
     8 vértices, 6 faces quadradas.
@@ -250,6 +251,16 @@ def _build_d6() -> DiceMesh:
         [3, 0, 4, 7],   # -X → 4
     ]
     normals = _compute_normals(vertices, faces)
+    
+    if df:
+        return DiceMesh(
+            dice_type="df",
+            vertices=vertices,
+            faces=tuple(tuple(f) for f in faces),
+            normals=normals,
+            face_values=(-1, +1, 0, 0, -1, +1),
+        )
+
     return DiceMesh(
         dice_type="d6",
         vertices=vertices,
@@ -259,6 +270,10 @@ def _build_d6() -> DiceMesh:
     )
 
 def _build_d6_beveled(bevel=0.18) -> DiceMesh:
+    """
+    Não esta em uso.
+    """
+    
 
     a = 1.0 / np.sqrt(3)
 
@@ -368,7 +383,7 @@ def _build_d8() -> DiceMesh:
         face_values=(1, 2, 3, 4, 5, 6, 7, 8),
     )
 
-def _build_d10() -> DiceMesh:
+def _build_d10(d100=False) -> DiceMesh:
     """
     Trapezoedro pentagonal — d10.
     Dual do antiprisma pentagonal: 12 vértices, 10 faces kite.
@@ -385,8 +400,7 @@ def _build_d10() -> DiceMesh:
     # Índices 0-9: anel equatorial (alternado +y/-y)
     # Índice 10: polo superior (+Y), índice 11: polo inferior (-Y)
 
-    POLE_HEIGHT = 0.70
-    RADIUS_SCALE = 1.0
+    POLE_HEIGHT = 0.70    
 
     vertices = np.array([
         [ 0.44721360,  0.10557281,  0.32491970],  #  0
@@ -432,6 +446,16 @@ def _build_d10() -> DiceMesh:
     ]
 
     normals = _compute_normals(vertices, [list(f) for f in faces_raw])
+    
+    if d100:
+        return DiceMesh(
+            dice_type="d100",
+            vertices=vertices,
+            faces=tuple(faces_raw),
+            normals=normals,
+            face_values=(10, 20, 30, 40, 50, 60, 70, 80, 90, 100),
+        )
+
     return DiceMesh(
         dice_type="d10",
         vertices=vertices,
@@ -562,13 +586,15 @@ def _build_d20() -> DiceMesh:
 
 
 _BUILDERS = {
-    "d4":  _build_d4,
-    "d6":  _build_d6,
-    "d8":  _build_d8,
-    "d10": _build_d10,
-    "d12": _build_d12,
-    "d20": _build_d20,
-}
+        "d4": lambda: _build_d4(),
+        "d6": lambda: _build_d6(),
+        "d8": lambda: _build_d8(),
+        "d10": lambda: _build_d10(),
+        "d12": lambda: _build_d12(),
+        "d20": lambda: _build_d20(),
+        "d100": lambda: _build_d10(d100=True),
+        "df": lambda: _build_d6(df=True),
+    }
 
 # Cache de malhas (singleton por tipo — malhas são imutáveis)
 _MESH_CACHE: dict[str, DiceMesh] = {}
@@ -579,11 +605,13 @@ def get_mesh(dice_type: DiceType, scale: float = 1.0) -> DiceMesh:
     Retorna a DiceMesh para o tipo solicitado, com escala aplicada.
     Malhas base são cacheadas; escala cria nova instância leve.
     """
+    
     if dice_type not in _BUILDERS:
         raise ValueError(f"Tipo de dado desconhecido: '{dice_type}'. "
                          f"Suportados: {list(_BUILDERS.keys())}")
 
     if dice_type not in _MESH_CACHE:
+
         _MESH_CACHE[dice_type] = _BUILDERS[dice_type]()
 
     mesh = _MESH_CACHE[dice_type]
