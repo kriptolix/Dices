@@ -295,56 +295,62 @@ class PhysicsWorld:
     # Detecção de colisões para áudio
     # ------------------------------------------------------------------
 
-    def poll_collision_events(self) -> list[CollisionEvent]:
+    def _snapshot_velocities(self) -> dict[int, float]:
         """
-        Detecta novas colisões ocorridas no último step() e retorna
-        uma lista de CollisionEvent para o motor de áudio processar.
+        Captura a velocidade escalar de cada dado antes de um substep.
+        Usado para calcular delta-v após o substep como proxy de impulso.
+        """
+        snap = {}
+        for bid in self.dice_ids:
+            lv, av = pb.getBaseVelocity(bid, physicsClientId=self.client)
+            speed = math.sqrt(lv[0]**2 + lv[1]**2 + lv[2]**2)
+            snap[bid] = speed
+        return snap
 
-        Somente colisões *novas* (pares que não estavam em contato no tick
-        anterior) são emitidas, evitando múltiplos disparos de som enquanto
-        os objetos permanecem encostados ou vibram micro-contatos.
+    def poll_collision_events(
+        self,
+        pre_velocities: dict[int, float] | None = None,
+    ) -> list[CollisionEvent]:
+        """
+        Detecta colisões novas ocorridas no substep mais recente.
 
-        O impulso reportado é a soma das forças normais de todos os pontos
-        de contato do par — proxy fiel da energia transferida no impacto.
+        Parâmetros
+        ----------
+        pre_velocities : snapshot de velocidades capturado ANTES do substep
+                         via _snapshot_velocities(). Se fornecido, o impulso
+                         é calculado como delta-v × massa, que é fisicamente
+                         correto e independente do tipo de superfície.
+                         Se None, usa normalForce como fallback.
 
-        Retorna lista vazia se não há dados ou não houve contatos novos.
+        O delta-v é muito mais fiel para paredes: o dado bate com 5 m/s
+        e sai com 3 m/s → delta = 2 m/s → impulso = 0.02kg × 2 = 0.04 N·s.
         """
         if not self.dice_ids:
             return []
 
-        dice_set   = set(self.dice_ids)
-        curr_contacts: set[tuple[int, int]] = set()
-        events: list[CollisionEvent] = []
+        DICE_MASS = 0.020   # kg — deve coincidir com physics.add_dice
 
-        # Acumula impulso por par (PyBullet pode retornar vários pontos
-        # de contato para o mesmo par de corpos no mesmo tick)
-        pair_impulse: dict[tuple[int, int], float] = {}
+        dice_set      = set(self.dice_ids)
+        curr_contacts: set[tuple[int, int]] = set()
+        pair_bodies:   dict[tuple[int, int], tuple[int, int]] = {}
 
         for bid in self.dice_ids:
-            contacts = pb.getContactPoints(
-                bodyA=bid,
-                physicsClientId=self.client,
-            )
+            contacts = pb.getContactPoints(bodyA=bid,
+                                           physicsClientId=self.client)
             if not contacts:
                 continue
-
             for c in contacts:
-                # getContactPoints retorna tupla; índices:
-                #   [1] = bodyA, [2] = bodyB, [9] = normalForce
                 body_a = int(c[1])
                 body_b = int(c[2])
-                force  = float(c[9])
-
-                # Normaliza par para chave consistente
-                pair = (min(body_a, body_b), max(body_a, body_b))
+                pair   = (min(body_a, body_b), max(body_a, body_b))
                 curr_contacts.add(pair)
-                pair_impulse[pair] = pair_impulse.get(pair, 0.0) + abs(force)
+                pair_bodies[pair] = (body_a, body_b)
 
-        # Emite eventos apenas para pares que são NOVOS neste tick
+        events: list[CollisionEvent] = []
         new_pairs = curr_contacts - self._prev_contacts
+
         for pair in new_pairs:
-            body_a, body_b = pair
-            impulse = pair_impulse.get(pair, 0.0)
+            body_a, body_b = pair_bodies[pair]
 
             # Classifica superfície
             if body_a == self._floor_id or body_b == self._floor_id:
@@ -354,7 +360,25 @@ class PhysicsWorld:
             elif body_a in dice_set and body_b in dice_set:
                 surface = Surface.DICE
             else:
-                continue  # contato com objeto desconhecido — ignora
+                continue
+
+            # Calcula impulso via delta-v do dado envolvido
+            if pre_velocities is not None:
+                # Identifica qual dos dois é o dado (corpo dinâmico)
+                dice_id = body_a if body_a in dice_set else body_b
+                v_before = pre_velocities.get(dice_id, 0.0)
+                lv, _ = pb.getBaseVelocity(dice_id, physicsClientId=self.client)
+                v_after = math.sqrt(lv[0]**2 + lv[1]**2 + lv[2]**2)
+                impulse = abs(v_before - v_after) * DICE_MASS * 50.0
+                # × 50 converte para escala compatível com IMPACT_REFERENCE=10
+                # (delta-v típico de 0.04 N·s ficaria inaudível sem escala)
+            else:
+                # Fallback: soma de normalForce dos pontos de contato do par
+                contacts = pb.getContactPoints(
+                    bodyA=body_a, bodyB=body_b,
+                    physicsClientId=self.client,
+                ) or []
+                impulse = sum(abs(float(c[9])) for c in contacts)
 
             events.append(CollisionEvent(
                 body_a=body_a,

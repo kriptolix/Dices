@@ -202,14 +202,28 @@ class DiceSimulation:
         if not self._simulating or not self._states:
             return
 
+        # Coleta eventos de colisão dentro de cada substep — não depois.
+        # Com SIM_SUBSTEPS=6 um impacto pode durar apenas 1-2 substeps;
+        # consultar só no final perderia a maioria dos contatos.
+        collision_events = []
         for _ in range(self._steps_per_tick):
+            pre_vel = self._physics._snapshot_velocities()
             self._physics.step()
             for s in self._states:
                 s.update_status()
+            collision_events.extend(
+                self._physics.poll_collision_events(pre_vel)
+            )
 
-        # Áudio: colisões novas detectadas pelo motor de física
-        for event in self._physics.poll_collision_events():
-            self.audio.on_collision(event)
+        # Áudio: dispara apenas o evento de maior impulso por par
+        # (evita múltiplos disparos do mesmo impacto em substeps consecutivos)
+        best: dict[tuple[int, int], CollisionEvent] = {}
+        for evt in collision_events:
+            pair = (min(evt.body_a, evt.body_b), max(evt.body_a, evt.body_b))
+            if pair not in best or evt.impulse > best[pair].impulse:
+                best[pair] = evt
+        for evt in best.values():
+            self.audio.on_collision(evt)
 
         # Áudio: loop contínuo de rolling
         self.audio.on_rolling(self._states)

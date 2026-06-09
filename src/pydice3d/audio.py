@@ -82,7 +82,7 @@ except ImportError:
 # Caminho dos assets
 # ────────────────────────────────────────────────────────────────────────────
 
-_AUDIO_DIR = Path(__file__).parent / "assets" / "sounds"
+_AUDIO_DIR = Path(__file__).parent / "assets" / "audio"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -261,16 +261,99 @@ ROLLING_SPEED_REFERENCE: float = 15.0
 # Volume mínimo do loop de rolling (evita silêncio abrupto na desaceleração)
 ROLLING_VOL_MIN: float = 0.05
 
-# Cooldown mínimo entre sons do mesmo par de corpos (segundos).
-# PyBullet gera vários pontos de contato por colisão no mesmo tick;
-# o cooldown garante que só um som seja disparado por impacto real.
-COOLDOWN_SAME_PAIR: float = 0.08
+# Cooldown por superfície (segundos) — paredes têm cooldown menor porque
+# o dado quica múltiplas vezes rápido sem que soe repetitivo
+COOLDOWN_FLOOR: float = 0.08
+COOLDOWN_WALL:  float = 0.04
+COOLDOWN_DICE:  float = 0.06
 
 # Taxa de simulação assumida para converter segundos em ticks
 _SIM_HZ: float = 60.0
 
 # Máximo de sons simultâneos — evita sobrecarga em cascatas de colisão
 MAX_CONCURRENT_SOUNDS: int = 8
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# _SoundSlot — stream pré-aberto para playback de baixa latência
+# ────────────────────────────────────────────────────────────────────────────
+
+class _SoundSlot:
+    """
+    Stream sounddevice pré-aberto e em standby.
+
+    Manter o stream aberto elimina a latência de ~20-50ms que ocorre ao
+    criar um novo OutputStream a cada impacto. O callback simplesmente
+    copia amostras do buffer atual e zera o slot quando termina.
+    """
+
+    def __init__(self, sample_rate: int = 44100, channels: int = 1) -> None:
+        self._lock    = threading.Lock()
+        self._buf:    Optional[np.ndarray] = None   # float32
+        self._pos:    int  = 0
+        self._active: bool = False
+
+        self._stream = sd.OutputStream(
+            samplerate=sample_rate,
+            channels=channels,
+            dtype="float32",
+            blocksize=256,           # baixo para minimizar latência
+            callback=self._callback,
+        )
+        self._stream.start()
+
+    def play(self, buf: np.ndarray) -> None:
+        """Enfileira `buf` (float32) para reprodução imediata."""
+        with self._lock:
+            self._buf    = np.ascontiguousarray(buf, dtype=np.float32)
+            self._pos    = 0
+            self._active = True
+
+    @property
+    def is_free(self) -> bool:
+        return not self._active
+
+    def stop(self) -> None:
+        with self._lock:
+            self._buf    = None
+            self._pos    = 0
+            self._active = False
+
+    def close(self) -> None:
+        try:
+            self._stream.stop()
+            self._stream.close()
+        except Exception:
+            pass
+
+    def _callback(self, outdata: np.ndarray, frames: int, time_info, status) -> None:
+        with self._lock:
+            if not self._active or self._buf is None:
+                outdata[:] = 0
+                return
+
+            buf   = self._buf
+            pos   = self._pos
+            n_src = len(buf)
+            need  = frames
+
+            written = 0
+            while need > 0:
+                avail = n_src - pos
+                chunk = min(avail, need)
+                outdata[written:written + chunk] = buf[pos:pos + chunk].reshape(chunk, -1) if outdata.ndim == 2 else buf[pos:pos + chunk]
+                pos     += chunk
+                written += chunk
+                need    -= chunk
+                if pos >= n_src:
+                    # Buffer esgotado — zera o resto e marca slot livre
+                    outdata[written:] = 0
+                    self._buf    = None
+                    self._pos    = 0
+                    self._active = False
+                    return
+
+            self._pos = pos
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -281,10 +364,13 @@ class DiceAudioEngine:
     """
     Motor de áudio para rolagem de dados usando sounddevice.
 
+    Sons de impacto usam um pool de _SoundSlot pré-abertos para eliminar
+    a latência de ~20-50ms de criar um OutputStream a cada colisão.
+    O loop de rolling usa um OutputStream dedicado com callback.
+
     Parâmetros
     ----------
     audio_dir     : diretório com os arquivos WAV.
-                    Padrão: assets/audio/ relativo a este módulo.
     enabled       : False desabilita todo processamento (headless/testes).
     master_volume : escala global de volume [0.0, 1.0].
     """
@@ -298,39 +384,49 @@ class DiceAudioEngine:
         self.enabled       = enabled and _SD_AVAILABLE
         self.master_volume = float(np.clip(master_volume, 0.0, 1.0))
 
-        # Buffers WAV em memória — None se arquivo ausente
         self._samples: dict[str, Optional[WavBuffer]] = {}
         self._load_assets(audio_dir)
 
-        # Sons de impacto em andamento: lista de threads não-bloqueantes
-        self._active_threads: list[threading.Thread] = []
+        # Pool de streams pré-abertos — inicializado lazy no primeiro uso
+        self._slots:       list[_SoundSlot] = []
+        self._slots_ready: bool = False
 
         # Cooldown por par de corpos: (id_menor, id_maior) → ticks restantes
         self._cooldown: dict[tuple[int, int], int] = {}
-        self._cooldown_ticks = max(1, int(COOLDOWN_SAME_PAIR * _SIM_HZ))
+        self._cooldown_ticks_floor = max(1, int(COOLDOWN_FLOOR * _SIM_HZ))
+        self._cooldown_ticks_wall  = max(1, int(COOLDOWN_WALL  * _SIM_HZ))
+        self._cooldown_ticks_dice  = max(1, int(COOLDOWN_DICE  * _SIM_HZ))
 
-        # Estado do loop de rolling
+        # Loop de rolling
         self._rolling_stream: Optional[sd.OutputStream] = None
-        self._rolling_buf:    Optional[np.ndarray] = None   # float32 atual
-        self._rolling_pos:    int  = 0      # posição no buffer do loop
+        self._rolling_buf:    Optional[np.ndarray] = None
+        self._rolling_pos:    int  = 0
         self._rolling_lock:   threading.Lock = threading.Lock()
 
     # ── Carregamento ──────────────────────────────────────────────────────────
 
     def _load_assets(self, audio_dir: Path) -> None:
-        names = [
-            "hit_floor_soft",
-            "hit_floor_hard",
-            "hit_wall",
-            "hit_dice",
-            "rolling_loop",
-        ]
-        for name in names:
+        for name in ("hit_floor_soft", "hit_floor_hard",
+                     "hit_wall", "hit_dice", "rolling_loop"):
             path = audio_dir / f"{name}.wav"
             buf  = WavBuffer.load(path)
             if buf is None:
                 print(f"[audio] aviso: '{name}.wav' não encontrado em {audio_dir}")
             self._samples[name] = buf
+
+    def _ensure_slots(self) -> None:
+        """Cria o pool de slots na primeira chamada (lazy)."""
+        if self._slots_ready or not self.enabled:
+            return
+        try:
+            ref = next((b for b in self._samples.values() if b is not None), None)
+            sr  = ref.sample_rate if ref else 44100
+            ch  = ref.n_channels  if ref else 1
+            self._slots = [_SoundSlot(sr, ch) for _ in range(MAX_CONCURRENT_SOUNDS)]
+            self._slots_ready = True
+        except Exception as e:
+            print(f"[audio] erro ao criar pool de streams: {e}")
+            self.enabled = False
 
     # ── API principal ─────────────────────────────────────────────────────────
 
@@ -338,27 +434,28 @@ class DiceAudioEngine:
         """
         Processa um CollisionEvent vindo do PhysicsWorld.
 
-        Chamado para cada evento de poll_collision_events() no tick de física.
-        Disparos rápidos (<= cooldown) do mesmo par de corpos são descartados.
+        O simulation.step() já filtra para o maior impulso por par por tick,
+        então aqui só checamos threshold e cooldown.
         """
         if not self.enabled:
             return
         if event.impulse < IMPACT_THRESHOLD:
             return
 
-        # Limita sons simultâneos
-        self._active_threads = [t for t in self._active_threads if t.is_alive()]
-        if len(self._active_threads) >= MAX_CONCURRENT_SOUNDS:
-            return
+        self._ensure_slots()
 
-        # Cooldown por par de corpos
         pair = (min(event.body_a, event.body_b),
                 max(event.body_a, event.body_b))
         if self._cooldown.get(pair, 0) > 0:
             return
-        self._cooldown[pair] = self._cooldown_ticks
 
-        # Seleciona sample e calcula parâmetros
+        ticks = {
+            Surface.FLOOR: self._cooldown_ticks_floor,
+            Surface.WALL:  self._cooldown_ticks_wall,
+            Surface.DICE:  self._cooldown_ticks_dice,
+        }.get(event.surface, self._cooldown_ticks_floor)
+        self._cooldown[pair] = ticks
+
         buf = self._samples.get(self._sample_for(event))
         if buf is None:
             return
@@ -367,22 +464,15 @@ class DiceAudioEngine:
         volume *= self.master_volume
         pitch  = random.uniform(PITCH_MIN, PITCH_MAX)
 
-        # Playback em thread separada — não bloqueia o loop de física/render
-        t = threading.Thread(
-            target=self._play_oneshot,
-            args=(buf, volume, pitch),
-            daemon=True,
-        )
-        t.start()
-        self._active_threads.append(t)
+        slot = next((s for s in self._slots if s.is_free), None)
+        if slot is None:
+            return  # todos os slots ocupados — descarta
+
+        processed = buf.with_pitch(pitch).with_volume(volume)
+        slot.play(processed.as_output_array())
 
     def on_rolling(self, states: list) -> None:
-        """
-        Atualiza o loop contínuo de rolling.
-
-        Inicia o stream se dados estão em movimento, para se pararam.
-        O volume é ajustado proporcionalmente à velocidade angular média.
-        """
+        """Atualiza o loop contínuo de rolling."""
         if not self.enabled:
             return
 
@@ -390,11 +480,8 @@ class DiceAudioEngine:
         if buf is None:
             return
 
-        # Velocidade angular média dos dados ainda em movimento
-        speeds = [
-            float(np.linalg.norm(s.angular_velocity))
-            for s in states if not s.is_resting
-        ]
+        speeds = [float(np.linalg.norm(s.angular_velocity))
+                  for s in states if not s.is_resting]
 
         if not speeds or max(speeds) < ROLLING_SPEED_THRESHOLD:
             self._stop_rolling()
@@ -403,17 +490,13 @@ class DiceAudioEngine:
         avg_speed = sum(speeds) / len(speeds)
         vol = float(np.clip(avg_speed / ROLLING_SPEED_REFERENCE,
                             ROLLING_VOL_MIN, 1.0)) * self.master_volume
-
         self._ensure_rolling_stream(buf, vol)
 
     def on_roll_complete(self) -> None:
-        """Para o loop de rolling quando todos os dados param."""
         self._stop_rolling()
 
     def tick(self) -> None:
-        """
-        Avança contadores de cooldown. Chamar uma vez por tick de simulação.
-        """
+        """Avança contadores de cooldown. Chamar uma vez por tick."""
         expired = [p for p, n in self._cooldown.items() if n <= 1]
         for p in expired:
             del self._cooldown[p]
@@ -421,88 +504,50 @@ class DiceAudioEngine:
             self._cooldown[p] -= 1
 
     def stop_all(self) -> None:
-        """Para todos os sons imediatamente."""
         self._stop_rolling()
-        # Sons de impacto são não-bloqueantes e curtos; deixamos terminar
-        # naturalmente, mas podemos interromper o dispositivo padrão se preciso.
-        try:
-            if _SD_AVAILABLE:
-                sd.stop()
-        except Exception:
-            pass
-        self._active_threads.clear()
+        for slot in self._slots:
+            slot.stop()
 
-    # ── Internos — sons de impacto ────────────────────────────────────────────
+    # ── Internos ──────────────────────────────────────────────────────────────
 
     def _sample_for(self, event: CollisionEvent) -> str:
-        if event.surface == Surface.DICE:
-            return "hit_dice"
-        if event.surface == Surface.WALL:
-            return "hit_wall"
+        if event.surface == Surface.DICE:  return "hit_dice"
+        if event.surface == Surface.WALL:  return "hit_wall"
         return "hit_floor_soft" if event.impulse < 2.0 else "hit_floor_hard"
 
-    def _play_oneshot(self, buf: WavBuffer, volume: float, pitch: float) -> None:
-        """Executa em thread daemon — aplica pitch/volume e toca até o fim."""
-        try:
-            processed = buf.with_pitch(pitch).with_volume(volume)
-            arr       = processed.as_output_array()
-            sd.play(arr, samplerate=processed.sample_rate, blocking=True)
-        except Exception as e:
-            print(f"[audio] erro no playback: {e}")
-
-    # ── Internos — loop de rolling ────────────────────────────────────────────
-
     def _ensure_rolling_stream(self, buf: WavBuffer, volume: float) -> None:
-        """
-        Garante que o stream de rolling está ativo com o volume correto.
-
-        Usa um OutputStream com callback para fazer loop infinito sem gaps.
-        O volume é ajustado atomicamente via _rolling_buf sem reiniciar o stream.
-        """
-        # Atualiza buffer com novo volume (troca atômica lida pelo callback)
         new_arr = buf.with_volume(volume).as_output_array()
         with self._rolling_lock:
             self._rolling_buf = new_arr
 
         if self._rolling_stream is not None and self._rolling_stream.active:
-            return  # stream já rodando; o callback usa o buf atualizado
+            return
 
-        # Cria novo stream com callback de loop
         n_ch = buf.n_channels
 
-        def _callback(outdata: np.ndarray, frames: int, time_info, status) -> None:
+        def _cb(outdata: np.ndarray, frames: int, _t, _s) -> None:
             with self._rolling_lock:
                 src = self._rolling_buf
             if src is None:
                 outdata[:] = 0
                 return
-
-            n_src  = len(src)
-            pos    = self._rolling_pos
-            needed = frames
-
-            # Preenche outdata fazendo loop no buffer de rolling
-            out_flat = outdata.ravel() if n_ch == 1 else outdata
-            written  = 0
-            while needed > 0:
-                available = n_src - pos
-                chunk     = min(available, needed)
-                if n_ch == 1:
-                    out_flat[written:written + chunk] = src[pos:pos + chunk]
+            n_src = len(src)
+            pos, need, written = self._rolling_pos, frames, 0
+            while need > 0:
+                chunk = min(n_src - pos, need)
+                if outdata.ndim == 2:
+                    outdata[written:written + chunk] = src[pos:pos + chunk].reshape(chunk, -1)
                 else:
                     outdata[written:written + chunk] = src[pos:pos + chunk]
-                pos     = (pos + chunk) % n_src
+                pos = (pos + chunk) % n_src
                 written += chunk
-                needed  -= chunk
-
+                need    -= chunk
             self._rolling_pos = pos
 
         try:
             self._rolling_stream = sd.OutputStream(
-                samplerate=buf.sample_rate,
-                channels=n_ch,
-                dtype="float32",
-                callback=_callback,
+                samplerate=buf.sample_rate, channels=n_ch,
+                dtype="float32", blocksize=512, callback=_cb,
             )
             self._rolling_stream.start()
         except Exception as e:
@@ -520,3 +565,11 @@ class DiceAudioEngine:
         with self._rolling_lock:
             self._rolling_buf = None
         self._rolling_pos = 0
+
+    def __del__(self) -> None:
+        try:
+            self._stop_rolling()
+            for slot in self._slots:
+                slot.close()
+        except Exception:
+            pass

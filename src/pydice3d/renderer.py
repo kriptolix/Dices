@@ -214,6 +214,8 @@ def _load_atlas_texture(png_path: str) -> int:
     img = Image.open(png_path).convert("RGBA")
     img_data = np.array(img, dtype=np.uint8)
 
+    # img_data = np.load("textures_npy/minha_textura.npy")
+
     tex_id = GL.glGenTextures(1)
     GL.glBindTexture(GL.GL_TEXTURE_2D, tex_id)
     GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR_MIPMAP_LINEAR)
