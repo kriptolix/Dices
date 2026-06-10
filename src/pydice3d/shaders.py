@@ -179,7 +179,7 @@ vec2 symbol_atlas_uv(vec2 uv, vec4 rect, float scale, float offset_v) {
     if (abs(local.x) > 1.0 || abs(local.y) > 1.0) return vec2(-1.0);
     vec2 n = local * 0.5 + 0.5;
     n.y = clamp(n.y + offset_v * 0.5, 0.0, 1.0);
-    return vec2(mix(rect.x, rect.z, n.x), mix(rect.w, rect.y, n.y));
+    return vec2(mix(rect.x, rect.z, n.x), mix(rect.y, rect.w, n.y));
 }
 
 // ── Cobertura MSDF por tipo de glifo ─────────────────────────────────────────
@@ -442,20 +442,54 @@ def set_uniform_vec4_array(program: int, name: str, data: "np.ndarray") -> None:
 # Tabela de UV da atlas
 # ────────────────────────────────────────────────────────────────────────────
 
-def _atlas_bounds_to_uv(glyph: dict, atlas_w: float, atlas_h: float) -> "np.ndarray":
-    """
-    Converte atlasBounds (pixels absolutos, yOrigin=bottom) para
-    (u0, v0, u1, v1) normalizados em [0,1].
-
-    atlasBounds:  left, bottom, right, top  em pixels
-    yOrigin=bottom → v = y / height  (sem flip, igual ao OpenGL)
-    """
+def _glyph_to_uv_rect(glyph: dict, atlas_w: float, atlas_h: float) -> "np.ndarray":
     import numpy as np
-    b = glyph["atlasBounds"]
-    u0 = b["left"]   / atlas_w
-    u1 = b["right"]  / atlas_w
-    v0 = b["bottom"] / atlas_h
-    v1 = b["top"]    / atlas_h
+
+    ab = glyph["atlasBounds"]
+    ab_u0 = ab["left"]   / atlas_w
+    ab_u1 = ab["right"]  / atlas_w
+    # yOrigin=bottom: inverter Y para OpenGL (v=0 é topo)
+    ab_v0 = 1.0 - ab["top"]    / atlas_h
+    ab_v1 = 1.0 - ab["bottom"] / atlas_h
+
+    pb = glyph.get("planeBounds")
+    if pb is None:
+        return np.array([ab_u0, ab_v0, ab_u1, ab_v1], dtype=np.float32)
+
+    ab_du = ab_u1 - ab_u0
+    ab_dv = ab_v1 - ab_v0
+
+    if ab_du < 1e-7 or ab_dv < 1e-7:
+        return np.array([ab_u0, ab_v0, ab_u1, ab_v1], dtype=np.float32)
+
+    pb_w  = pb["right"]  - pb["left"]
+    pb_h  = pb["top"]    - pb["bottom"]
+    pb_cx = (pb["left"]   + pb["right"])  * 0.5
+    pb_cy = (pb["bottom"] + pb["top"])    * 0.5
+
+    half = max(pb_w, pb_h) * 0.5
+    if half < 1e-7:
+        return np.array([ab_u0, ab_v0, ab_u1, ab_v1], dtype=np.float32)
+
+    # Centro do planeBounds em fração normalizada
+    cx_frac = (pb_cx - pb["left"])   / pb_w
+    cy_frac = (pb_cy - pb["bottom"]) / pb_h
+
+    # Centro em UV do atlas (Y já invertido: bottom→v1, top→v0)
+    cx_uv = ab_u0 + cx_frac * ab_du
+    cy_uv = ab_v1 - cy_frac * ab_dv
+
+    # Escala: half EM → metade do tamanho em UV
+    half_u = half / pb_w * ab_du
+    half_v = half / pb_h * ab_dv
+
+    u0 = cx_uv - half_u;  u1 = cx_uv + half_u
+    v0 = cy_uv - half_v;  v1 = cy_uv + half_v
+
+    # Clamp ao atlasBounds
+    u0 = max(u0, ab_u0);  u1 = min(u1, ab_u1)
+    v0 = max(v0, ab_v0);  v1 = min(v1, ab_v1)
+
     return np.array([u0, v0, u1, v1], dtype=np.float32)
 
 
@@ -473,10 +507,9 @@ def build_glyph_uv_table(atlas_json: dict) -> "np.ndarray":
     Retorna float32 (10, 4) com os rects (u0,v0,u1,v1) dos dígitos 0–9.
     Índice i == dígito i.
 
-    Suporta os dois formatos:
-      - Novo (msdf-atlas-gen): array de glyphs com campo "unicode" e
-        "atlasBounds" em pixels absolutos.
-      - Antigo: dict "glyphs" com chaves "0"–"9" e campos u0/v0/u1/v1.
+    Os UVs são ajustados pelo planeBounds para que o shader mapeie
+    corretamente o UV local [-1,1] para a região do glifo no atlas,
+    sem vazar para glifos vizinhos.
     """
     import numpy as np
     table = np.zeros((10, 4), dtype=np.float32)
@@ -488,15 +521,12 @@ def build_glyph_uv_table(atlas_json: dict) -> "np.ndarray":
     glyphs_raw = atlas_json.get("glyphs", {})
 
     if isinstance(glyphs_raw, list):
-        # Novo formato: array com campo "unicode"
-        # '0'=48, '1'=49, ..., '9'=57
         by_unicode = _build_unicode_index(atlas_json)
         for digit in range(10):
-            cp = 48 + digit   # codepoint unicode de '0' é 48
+            cp = 48 + digit
             if cp in by_unicode:
-                table[digit] = _atlas_bounds_to_uv(by_unicode[cp], atlas_w, atlas_h)
+                table[digit] = _glyph_to_uv_rect(by_unicode[cp], atlas_w, atlas_h)
     else:
-        # Formato antigo: dict com chaves string "0"–"9" e u0/v0/u1/v1
         for i in range(10):
             key = str(i)
             if key in glyphs_raw:
@@ -508,9 +538,8 @@ def build_glyph_uv_table(atlas_json: dict) -> "np.ndarray":
 
 def build_symbol_uvs(atlas_json: dict) -> "tuple[np.ndarray, np.ndarray]":
     """
-    Retorna (plus_rect, minus_rect) como float32 arrays de shape (4,).
-    Usados para os uniforms u_glyph_uv_plus e u_glyph_uv_minus.
-
+    Retorna (plus_rect, minus_rect) como float32 arrays de shape (4,),
+    ajustados pelo planeBounds.
     Unicode: '+' = 43, '-' = 45.
     """
     import numpy as np
@@ -524,10 +553,10 @@ def build_symbol_uvs(atlas_json: dict) -> "tuple[np.ndarray, np.ndarray]":
 
     if isinstance(glyphs_raw, list):
         by_unicode = _build_unicode_index(atlas_json)
-        plus_rect  = _atlas_bounds_to_uv(by_unicode[43], atlas_w, atlas_h) \
-                     if 43 in by_unicode else zero4
-        minus_rect = _atlas_bounds_to_uv(by_unicode[45], atlas_w, atlas_h) \
-                     if 45 in by_unicode else zero4
+        plus_rect  = _glyph_to_uv_rect(by_unicode[43], atlas_w, atlas_h) \
+                     if 43 in by_unicode else zero4.copy()
+        minus_rect = _glyph_to_uv_rect(by_unicode[45], atlas_w, atlas_h) \
+                     if 45 in by_unicode else zero4.copy()
     else:
         def _rect(key):
             if key in glyphs_raw:

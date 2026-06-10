@@ -9,12 +9,10 @@ description = "3D dice rendering and physics library"
 requires-python = ">=3.13"
 
 dependencies = [
-    "numpy>=2.4,<3",
-    "Pillow>=12,<13",
+    "numpy>=2.4,<3",    
     "pybullet>=3.2",
     "PyOpenGL>=3.1",
-    "PyOpenGL-accelerate>=3.1",
-    "scipy>=1.17,<2",
+    "PyOpenGL-accelerate>=3.1",    
 ]
 
 [tool.setuptools.packages.find]

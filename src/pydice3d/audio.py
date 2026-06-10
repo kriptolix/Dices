@@ -1,22 +1,8 @@
 """
 audio.py – Motor de Áudio para Rolagem de Dados
 
-Camada de áudio independente de OpenGL e GTK.
 Recebe eventos de colisão vindos do PhysicsWorld e reproduz
 samples com volume e pitch variados via sounddevice + PortAudio.
-
-Por que sounddevice em vez de simpleaudio
-──────────────────────────────────────────
-simpleaudio depende de ALSA, que foi removido de distros Linux modernas
-(Fedora, Ubuntu 22+) em favor de PipeWire/PulseAudio. sounddevice usa
-PortAudio, que abstrai o backend de áudio do SO e funciona em:
-  Linux   : PipeWire, PulseAudio, JACK, ALSA (qualquer um disponível)
-  macOS   : CoreAudio
-  Windows : WASAPI / DirectSound
-
-Instalação
-──────────
-    pip install sounddevice
 
 Arquitetura
 ───────────
@@ -54,9 +40,6 @@ assets/audio/
 WAV: qualquer sample rate, mono ou estéreo, qualquer bit depth.
 O motor converte internamente para float32 e para o sample rate
 do dispositivo padrão.
-
-O motor funciona silenciosamente se sounddevice não estiver instalado
-ou se algum arquivo de audio estiver ausente.
 """
 
 from __future__ import annotations
@@ -124,10 +107,7 @@ class CollisionEvent:
 @dataclass
 class WavBuffer:
     """
-    PCM decodificado de um WAV, armazenado como float32 em [-1.0, 1.0].
-
-    sounddevice trabalha nativamente com float32, então mantemos os dados
-    nesse formato desde o carregamento — sem conversão a cada playback.
+    PCM decodificado de um WAV, armazenado como float32 em [-1.0, 1.0].    
 
     data        : shape (n_samples,) para mono, (n_samples, 2) para estéreo
     sample_rate : taxa original do arquivo (usada para resampling de pitch)
@@ -362,11 +342,7 @@ class _SoundSlot:
 
 class DiceAudioEngine:
     """
-    Motor de áudio para rolagem de dados usando sounddevice.
-
-    Sons de impacto usam um pool de _SoundSlot pré-abertos para eliminar
-    a latência de ~20-50ms de criar um OutputStream a cada colisão.
-    O loop de rolling usa um OutputStream dedicado com callback.
+    Motor de áudio para rolagem de dados usando sounddevice.    
 
     Parâmetros
     ----------
