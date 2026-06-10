@@ -1,26 +1,17 @@
 """
-simulation.py – Orquestrador da Simulação de Dados
+simulation.py – Data Simulation Orchestrator
 
-Camada intermediária entre o núcleo (física + estados) e qualquer interface
-gráfica. Não importa OpenGL, GTK nem nenhum outro toolkit.
-
-Responsabilidades
+Responsibilities
 ─────────────────
-- Criar e destruir o PhysicsWorld
-- Executar spawn_dice e manter a lista de DiceState
-- Avançar a simulação frame a frame (step)
-- Calcular matrizes de câmera/projeção
-- Redimensionar a bandeja física quando o viewport muda
-- Monitorar o término da rolagem via RollMonitor
-- Expor o resultado final via `result`
+- Create and destroy the PhysicsWorld
+- Execute spawn_dice and maintain the DiceState list
+- Advance the simulation frame by frame (step)
+- Calculate camera/projection matrices
+- Resize the physical tray when the viewport changes
+- Monitor the end of the roll via RollMonitor
+- Display the final result via `result`
 
-O que NÃO faz
-─────────────
-- Nada de OpenGL (sem VAO, VBO, shaders, texturas)
-- Nada de GTK/Qt/SDL (sem janelas, sinais, timers de toolkit)
-- Nada de I/O (sem carregamento de assets)
-
-Uso headless (testes, CLI, servidor)
+Headless use (tests, CLI, server)
 ──────────────────────────────────────
     from pydice3d.simulation import DiceSimulation
 
@@ -30,23 +21,23 @@ Uso headless (testes, CLI, servidor)
         sim.step()
     print(sim.result.as_dict())   # {"d6": [3, 5], "d20": [17]}
 
-Uso com frontend OpenGL
+OpenGL frontend use
 ────────────────────────
     sim = DiceSimulation()
-    sim.resize(viewport_w, viewport_h)   # sincroniza bandeja e câmera
+    sim.resize(viewport_w, viewport_h)   # synchronizes tray and camera
     sim.roll({"d6": 3})
 
     # a cada frame do loop de render:
     VP       = sim.view_projection()     # mat4 float32
     cam_pos  = sim.camera_position()     # vec3 float32
-    states   = sim.states                # lista de DiceState
-    sim.step()                           # avança física + monitora término
+    states   = sim.states                # DiceState list
+    sim.step()                           # advances physics + monitors the end.
 """
 
 from __future__ import annotations
 
 import math
-from typing import Optional, Callable
+from typing import Optional, Callable, TYPE_CHECKING
 
 import numpy as np
 
@@ -57,7 +48,9 @@ from pydice3d.roll_result import RollMonitor, RollResult
 from pydice3d.camera     import look_at, perspective
 from pydice3d.audio      import DiceAudioEngine
 
-
+if TYPE_CHECKING:
+    from pydice3d.audio import CollisionEvent
+    
 # ────────────────────────────────────────────────────────────────────────────
 # Parâmetros de câmera padrão
 # ────────────────────────────────────────────────────────────────────────────
@@ -103,11 +96,10 @@ class DiceSimulation:
         self._on_result     = on_result
         self._steps_per_tick = steps_per_tick
         self._spawn_cfg     = spawn_cfg
-
-        # Motor de áudio — silencioso se simpleaudio não estiver instalado
+        
         self.audio = DiceAudioEngine()
 
-        # Câmera
+        # Camera
         self._cam_eye    = _DEFAULT_CAM_EYE.copy()
         self._cam_center = _DEFAULT_CAM_CENTER.copy()
         self._cam_up     = _DEFAULT_CAM_UP.copy()
@@ -115,13 +107,13 @@ class DiceSimulation:
         self._near       = _DEFAULT_NEAR
         self._far        = _DEFAULT_FAR
 
-        # Dimensões do viewport (pixels) — necessárias para a projeção
+        # Viewport (pixels) 
         self._vp_w: int = 660
         self._vp_h: int = 460
 
         self._simulating: bool = False
 
-    # ── Configuração ─────────────────────────────────────────────────────────
+    # ── Configuration ─────────────────────────────────────────────────────────
 
     def resize(self, width: int, height: int) -> None:
         """

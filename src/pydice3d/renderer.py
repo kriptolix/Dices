@@ -30,6 +30,7 @@ from OpenGL import GL
 
 from pydice3d.camera import FixedCamera, OrbitalCamera
 from pydice3d.render_data import RenderScene, DiceRenderData
+from pydice3d.dice_mesh import DICE_THEMES, DEFAULT_DICE_COLOR
 from pydice3d.shaders import (
     build_dice_program, build_ground_program,
     set_uniform_mat4, set_uniform_mat3,
@@ -45,12 +46,8 @@ from pydice3d.shaders import (
 # Cores e escalas visuais por tipo de dado
 # ────────────────────────────────────────────────────────────────────────────
 
-DICE_THEMES: dict[str, tuple[float, float, float]] = {
-    "dark":    (0.15, 0.15, 0.15),   # black
-    "light":    (0.95, 0.95, 0.95),   # white
-}
-
-DEFAULT_DICE_COLOR = (0.7, 0.7, 0.7)
+# DICE_THEMES e DEFAULT_DICE_COLOR vivem em dice_mesh.py (camada de domínio)
+# e são reexportados aqui para compatibilidade com imports externos.
 
 # Escala visual por tipo — afeta apenas a aparência, não a colisão PyBullet
 DICE_VISUAL_SCALE: dict[str, float] = {
@@ -188,7 +185,7 @@ def _load_atlas_texture(npy_path: str) -> int:
     textura OpenGL RGBA.
 
     O array deve ter shape (H, W, 4) dtype uint8 — exatamente o que
-    numpy.save produz ao exportar uma imagem RGBA. Não requer Pillow.
+    numpy.save produz ao exportar uma imagem RGBA. 
 
     A textura é configurada sem mipmaps: MSDF é projetado para funcionar
     em escala linear; mipmaps introduzem artefatos nas bordas SDF ao

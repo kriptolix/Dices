@@ -13,11 +13,17 @@ from pydice3d.shaders import GLYPH_NONE, MAX_FACES
 if TYPE_CHECKING:
     from pydice3d.dice_state import DiceState
 
-from pydice3d.shaders import GLYPH_PLUS, GLYPH_MINUS, GLYPH_BLANK, glyph_d100
+from pydice3d.shaders import GLYPH_PLUS, GLYPH_MINUS, GLYPH_BLANK
+from pydice3d.dice_mesh import DICE_THEMES, DEFAULT_DICE_COLOR
 
-FUDGE_GLYPHS = [GLYPH_PLUS, GLYPH_PLUS,
-                GLYPH_MINUS, GLYPH_MINUS,
-                GLYPH_BLANK, GLYPH_BLANK]
+FUDGE_GLYPHS: tuple[int, ...] = (GLYPH_PLUS, GLYPH_PLUS,
+                                  GLYPH_MINUS, GLYPH_MINUS,
+                                  GLYPH_BLANK, GLYPH_BLANK)
+
+
+def glyph_d100(tens: int) -> int:
+    """tens ∈ {0,10,20,...,90} → índice de glifo (domínio puro, sem OpenGL)."""
+    return 21 + ((tens % 100) // 10)
 
 
 def build_face_glyphs(dice_type: str, face_values: list[int]) -> list[int]:
@@ -229,19 +235,20 @@ class DiceRenderData:
     is_resting:    bool = False
 
     @classmethod
-    def from_state(cls, state: "DiceState") -> "DiceRenderData":
+    def from_state(cls, state: "DiceState", theme: str = "light") -> "DiceRenderData":
         mesh      = state.dice.mesh
         dice_type = state.dice.dice_type
         if dice_type == "d4":
-            return cls._from_state_d4(state)
+            return cls._from_state_d4(state, theme)
         uv_scale     = GLYPH_UV_SCALE.get(dice_type, _DEFAULT_UV_SCALE)
         use_long_axis = dice_type in _USE_LONG_AXIS
-        return cls._from_state_generic(state, uv_scale, use_long_axis)
+        return cls._from_state_generic(state, uv_scale, use_long_axis, theme)
 
     @classmethod
     def _from_state_generic(cls, state: "DiceState",
                              uv_scale: float,
-                             use_long_axis: bool) -> "DiceRenderData":
+                             use_long_axis: bool,
+                             theme: str = "light") -> "DiceRenderData":
         mesh      = state.dice.mesh
         dice_type = state.dice.dice_type
 
@@ -280,12 +287,12 @@ class DiceRenderData:
                 vb[row, 8]   = float(fi)
 
         face_glyphs = build_face_glyphs(dice_type, list(mesh.face_values))
-        glyph_color = _choose_glyph_color(dice_type)
+        glyph_color = _choose_glyph_color(dice_type, theme)
         return cls(vertex_buffer=vb, index_buffer=ib, n_indices=len(ib),
                    face_glyphs=face_glyphs, glyph_color=glyph_color)
 
     @classmethod
-    def _from_state_d4(cls, state: "DiceState") -> "DiceRenderData":
+    def _from_state_d4(cls, state: "DiceState", theme: str = "light") -> "DiceRenderData":
         """
         Cada face triangular é dividida em 3 sub-triângulos (via centróide).
         Sub-triângulo k cobre a ARESTA oposta ao vértice local k:
@@ -299,7 +306,7 @@ class DiceRenderData:
         dice_type = state.dice.dice_type
 
         base_glyphs = build_face_glyphs(dice_type, list(mesh.face_values))
-        glyph_color = _choose_glyph_color(dice_type)
+        glyph_color = _choose_glyph_color(dice_type, theme)
 
         # Monta tabela: vértice global v → índice da face oposta a v
         # No tetraedro padrão: face fi é oposta ao vértice fi.
@@ -350,13 +357,10 @@ class DiceRenderData:
                    face_glyphs=expanded_glyphs, glyph_color=glyph_color)
 
 
-def _choose_glyph_color(dice_type: str) -> tuple:
-    from pydice3d.renderer import DEFAULT_DICE_COLOR, DICE_THEMES
+def _choose_glyph_color(dice_type: str, theme: str = "light") -> tuple:
     
-    r, g, b = DICE_THEMES.get("light", DEFAULT_DICE_COLOR)
-    luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
-    if luminance > 0.5:
-        return (0.08, 0.08, 0.10)
+    if theme == "dark":
+        return (0.15, 0.15, 0.15)
     return (0.95, 0.95, 0.95)
 
 
@@ -367,8 +371,8 @@ class RenderScene:
         self.dice_renders = dice_renders
 
     @classmethod
-    def from_states(cls, states: list["DiceState"]) -> "RenderScene":
-        return cls([DiceRenderData.from_state(s) for s in states])
+    def from_states(cls, states: list["DiceState"], theme: str = "light") -> "RenderScene":
+        return cls([DiceRenderData.from_state(s, theme) for s in states])
 
     def update(self, states: list["DiceState"], alpha: float = 1.0) -> None:
         for rd, state in zip(self.dice_renders, states):

@@ -142,6 +142,7 @@ class DiceGLArea(Gtk.GLArea):
             self._scene, [],
             atlas_npy=_ATLAS_NPY,
             atlas_json=self._atlas_json,
+            theme="dark"
         )
 
     def _on_unrealize(self, _area) -> None:

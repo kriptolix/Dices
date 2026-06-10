@@ -69,11 +69,6 @@ GLYPH_BLANK  = 33    # face vazia dado fudge
 MAX_FACES    = 24    # máximo de faces suportadas pelo array de uniforms
 MAX_GLYPHS   = 34    # índices 0–33 (GLYPH_BLANK inclusive); 255=GLYPH_NONE fica fora
 
-# d100 dezenas: 00→21, 10→22, ..., 90→30
-def glyph_d100(tens: int) -> int:
-    """tens ∈ {0,10,20,...,90} → índice de glifo"""
-    return 21 + ((tens % 100) // 10)
-
 
 # ────────────────────────────────────────────────────────────────────────────
 # Código GLSL
@@ -171,20 +166,54 @@ float msdf_coverage(vec2 auv) {
 }
 
 // ── Mapeamento UV para a atlas ───────────────────────────────────────────────
+//
+// Problema de distorção: o rect UV de cada glifo preserva proporções em
+// pixels de atlas (gerado por _glyph_to_uv_rect), mas se o shader mapear
+// [-1,1] independentemente em X e Y para o rect, ele estica o glifo para
+// preencher a área quadrada — distorcendo glifos estreitos ("1") ou largos ("-").
+//
+// Solução: calcular o aspect ratio do rect em pixels de atlas
+//   ar = (du_pixels) / (dv_pixels)
+// e escalar o eixo local menor de forma que o glifo apareça com suas
+// proporções reais, centralizado (letterbox dentro do [-scale, scale]²).
+
+vec2 rect_atlas_uv(vec2 local_xy, vec4 rect) {
+    // rect = (u0, v0, u1, v1) em UV normalizado [0,1].
+    // Calcula aspect ratio em pixels: ar > 1 → mais largo que alto.
+    vec2  atlas_sz = vec2(textureSize(u_glyph_atlas, 0));
+    float du_px    = (rect.z - rect.x) * atlas_sz.x;
+    float dv_px    = (rect.w - rect.y) * atlas_sz.y;
+    float ar       = (dv_px > 1e-4) ? (du_px / dv_px) : 1.0;
+
+    // Comprime o eixo menor: local_xy ∈ [-1,1]², mas só a faixa
+    // [-1/ar, 1/ar] em X (se ar < 1) ou [-ar, ar] em Y (se ar > 1)
+    // corresponde ao glifo real. Fora disso → descarta (-1.0).
+    vec2 scaled;
+    if (ar >= 1.0) {
+        // Mais largo que alto: comprimir Y
+        scaled = vec2(local_xy.x, local_xy.y * ar);
+    } else {
+        // Mais alto que largo: comprimir X
+        scaled = vec2(local_xy.x / ar, local_xy.y);
+    }
+    if (abs(scaled.x) > 1.0 || abs(scaled.y) > 1.0) return vec2(-1.0);
+
+    vec2 n = scaled * 0.5 + 0.5;
+    // rect.y = v0 (topo OpenGL), rect.w = v1 (base OpenGL) para dígitos;
+    // interpola U de rect.x→rect.z, V de rect.w→rect.y (Y já invertido pelo Python).
+    return vec2(mix(rect.x, rect.z, n.x), mix(rect.w, rect.y, n.y));
+}
 
 vec2 digit_atlas_uv(vec2 uv, int digit, float offset_x, float x_scale, float y_scale) {
     vec2 local = vec2((uv.x - offset_x) / x_scale, uv.y / y_scale);
     if (abs(local.x) > 1.0 || abs(local.y) > 1.0) return vec2(-1.0);
-    vec4 rect = u_glyph_uvs[digit];
-    vec2 n    = local * 0.5 + 0.5;
-    return vec2(mix(rect.x, rect.z, n.x), mix(rect.w, rect.y, n.y));
+    return rect_atlas_uv(local, u_glyph_uvs[digit]);
 }
 
 vec2 symbol_atlas_uv(vec2 uv, vec4 rect, float scale) {
     vec2 local = uv / scale;
     if (abs(local.x) > 1.0 || abs(local.y) > 1.0) return vec2(-1.0);
-    vec2 n = local * 0.5 + 0.5;
-    return vec2(mix(rect.x, rect.z, n.x), mix(rect.y, rect.w, n.y));
+    return rect_atlas_uv(local, rect);
 }
 
 // ── Cobertura MSDF por tipo de glifo ─────────────────────────────────────────
@@ -516,6 +545,34 @@ def _build_unicode_index(atlas_json: dict) -> dict:
             if "atlasBounds" in g}
 
 
+def _build_glyph_uvs_from_list(
+    by_unicode: dict,
+    atlas_w: float,
+    atlas_h: float,
+) -> "tuple[np.ndarray, np.ndarray, np.ndarray]":
+    """
+    Extrai (digit_table, plus_rect, minus_rect) a partir de um índice
+    unicode já construído.  Separado para que build_glyph_uv_table e
+    build_symbol_uvs possam compartilhá-lo sem reconstruir o índice.
+    """
+    import numpy as np
+
+    zero4 = np.zeros(4, dtype=np.float32)
+
+    table = np.zeros((10, 4), dtype=np.float32)
+    for digit in range(10):
+        cp = 48 + digit
+        if cp in by_unicode:
+            table[digit] = _glyph_to_uv_rect(by_unicode[cp], atlas_w, atlas_h)
+
+    plus_rect  = (_glyph_to_uv_rect(by_unicode[43], atlas_w, atlas_h)
+                  if 43 in by_unicode else zero4.copy())
+    minus_rect = (_glyph_to_uv_rect(by_unicode[45], atlas_w, atlas_h)
+                  if 45 in by_unicode else zero4.copy())
+
+    return table, plus_rect, minus_rect
+
+
 def build_glyph_uv_table(atlas_json: dict) -> "np.ndarray":
     """
     Retorna float32 (10, 4) com os rects (u0,v0,u1,v1) dos dígitos 0–9.
@@ -526,7 +583,6 @@ def build_glyph_uv_table(atlas_json: dict) -> "np.ndarray":
     sem vazar para glifos vizinhos.
     """
     import numpy as np
-    table = np.zeros((10, 4), dtype=np.float32)
 
     atlas_info = atlas_json.get("atlas", {})
     atlas_w = float(atlas_info.get("width",  1))
@@ -536,18 +592,16 @@ def build_glyph_uv_table(atlas_json: dict) -> "np.ndarray":
 
     if isinstance(glyphs_raw, list):
         by_unicode = _build_unicode_index(atlas_json)
-        for digit in range(10):
-            cp = 48 + digit
-            if cp in by_unicode:
-                table[digit] = _glyph_to_uv_rect(by_unicode[cp], atlas_w, atlas_h)
+        table, _, _ = _build_glyph_uvs_from_list(by_unicode, atlas_w, atlas_h)
+        return table
     else:
+        table = np.zeros((10, 4), dtype=np.float32)
         for i in range(10):
             key = str(i)
             if key in glyphs_raw:
                 g = glyphs_raw[key]
                 table[i] = [g["u0"], g["v0"], g["u1"], g["v1"]]
-
-    return table
+        return table
 
 
 def build_symbol_uvs(atlas_json: dict) -> "tuple[np.ndarray, np.ndarray]":
@@ -567,17 +621,12 @@ def build_symbol_uvs(atlas_json: dict) -> "tuple[np.ndarray, np.ndarray]":
 
     if isinstance(glyphs_raw, list):
         by_unicode = _build_unicode_index(atlas_json)
-        plus_rect  = _glyph_to_uv_rect(by_unicode[43], atlas_w, atlas_h) \
-                     if 43 in by_unicode else zero4.copy()
-        minus_rect = _glyph_to_uv_rect(by_unicode[45], atlas_w, atlas_h) \
-                     if 45 in by_unicode else zero4.copy()
+        _, plus_rect, minus_rect = _build_glyph_uvs_from_list(by_unicode, atlas_w, atlas_h)
+        return plus_rect, minus_rect
     else:
         def _rect(key):
             if key in glyphs_raw:
                 g = glyphs_raw[key]
                 return np.array([g["u0"], g["v0"], g["u1"], g["v1"]], dtype=np.float32)
             return zero4.copy()
-        plus_rect  = _rect("+")
-        minus_rect = _rect("-")
-
-    return plus_rect, minus_rect
+        return _rect("+"), _rect("-")

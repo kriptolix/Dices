@@ -33,6 +33,19 @@ DiceType = Literal["d4", "d6", "d8", "d10", "d12", "d20", "d100", "df"]
 ALL_DICE: tuple[DiceType, ...] = ("d4", "d6", "d8", "d10", "d12", "d20", "d100", "df")
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# Temas visuais — definidos aqui (camada de domínio) e reexportados por
+# renderer.py para não quebrar imports externos existentes.
+# ────────────────────────────────────────────────────────────────────────────
+
+DICE_THEMES: dict[str, tuple[float, float, float]] = {
+    "dark":  (0.15, 0.15, 0.15),   # preto
+    "light": (0.95, 0.95, 0.95),   # branco
+}
+
+DEFAULT_DICE_COLOR: tuple[float, float, float] = (0.7, 0.7, 0.7)
+
+
 @dataclass(frozen=True)
 class DiceMesh:
     """
