@@ -8,13 +8,26 @@ import numpy as np
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from pydice3d.shaders import GLYPH_NONE, MAX_FACES
+from pydice3d.shaders import (
+    GLYPH_NONE, GLYPH_PLUS, GLYPH_MINUS, GLYPH_BLANK, MAX_FACES,
+)
 
 if TYPE_CHECKING:
     from pydice3d.dice_state import DiceState
+from typing import NamedTuple
 
-from pydice3d.shaders import GLYPH_PLUS, GLYPH_MINUS, GLYPH_BLANK
-from pydice3d.dice_mesh import DICE_THEMES, DEFAULT_DICE_COLOR
+
+class DiceTheme(NamedTuple):
+    dice_color:  tuple[float, float, float]
+    glyph_color: tuple[float, float, float]
+
+
+DICE_THEMES: dict[str, DiceTheme] = {
+    "dark":  DiceTheme(dice_color=(0.15, 0.15, 0.15), glyph_color=(0.95, 0.95, 0.95)),
+    "light": DiceTheme(dice_color=(0.95, 0.95, 0.95), glyph_color=(0.15, 0.15, 0.15)),
+}
+
+DEFAULT_DICE_COLOR: tuple[float, float, float] = (0.7, 0.7, 0.7)
 
 FUDGE_GLYPHS: tuple[int, ...] = (GLYPH_PLUS, GLYPH_PLUS,
                                   GLYPH_MINUS, GLYPH_MINUS,

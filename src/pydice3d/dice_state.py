@@ -1,65 +1,29 @@
 """
 dice_state.py – Estado e Ciclo de Vida do Dado (PyBullet)
 
-Responsabilidade: manter o ciclo de vida de cada dado e capturar o resultado
-quando o dado para. Orientação e velocidades vêm do PyBullet via
-getBasePositionAndOrientation / getBaseVelocity.
+Responsabilidade: manter o ciclo de vida de cada dado (SPAWNED → ROLLING →
+SETTLING → RESTING) e expor orientação/velocidade via PyBullet.
 
-Os helpers de quaternion foram mantidos apenas para quat_to_matrix (necessário
-em top_face_value e rotation_matrix).
+Leitura de valores de face é responsabilidade de results.py, que consome
+DiceState como dado de entrada e calcula resultados de rolagem.
 
 Ciclo de vida: SPAWNED → ROLLING → SETTLING → RESTING
 """
 
 from __future__ import annotations
 
-import math
 from enum import Enum, auto
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pybullet as pb
+import math
 
 from pydice3d.dice import Dice
 
 
-# ────────────────────────────────────────────────────────────────────────────
-# Quaternion helpers (apenas o necessário para quat_to_matrix)
-# ────────────────────────────────────────────────────────────────────────────
-
-def quat_to_matrix(xyzw: np.ndarray) -> np.ndarray:
-    """
-    Quaternion [x, y, z, w] (formato PyBullet) → matriz de rotação 3×3.
-    """
-    x, y, z, w = xyzw
-    return np.array([
-        [1 - 2*(y*y + z*z),     2*(x*y - w*z),     2*(x*z + w*y)],
-        [    2*(x*y + w*z), 1 - 2*(x*x + z*z),     2*(y*z - w*x)],
-        [    2*(x*z - w*y),     2*(y*z + w*x), 1 - 2*(x*x + y*y)],
-    ], dtype=np.float64)
-
-
-def quat_slerp_xyzw(a: np.ndarray, b: np.ndarray, t: float) -> np.ndarray:
-    """
-    slerp entre dois quaternions [x,y,z,w]. Mantido para interpolated_rotation_matrix
-    (usado pelo renderer para suavizar frames).
-    """
-    dot = float(np.dot(a, b))
-    if dot < 0.0:
-        b   = -b
-        dot = -dot
-    dot = min(1.0, dot)
-    if dot > 0.9995:
-        return (a + t * (b - a)) / np.linalg.norm(a + t * (b - a))
-    theta_0 = math.acos(dot)
-    theta   = theta_0 * t
-    sin_t   = math.sin(theta)
-    sin_t0  = math.sin(theta_0)
-    s0 = math.cos(theta) - dot * sin_t / sin_t0
-    s1 = sin_t / sin_t0
-    result = s0 * a + s1 * b
-    return result / np.linalg.norm(result)
+from pydice3d.math_utils import quat_to_matrix, quat_slerp
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -101,8 +65,7 @@ class DiceState:
     """
     dice: Dice
 
-    status: DiceStatus    = DiceStatus.SPAWNED
-    result: Optional[int] = None
+    status: DiceStatus = DiceStatus.SPAWNED
 
     # Quaternions [x,y,z,w] para interpolação de render
     prev_orientation: np.ndarray = field(
@@ -197,38 +160,14 @@ class DiceState:
             # Caminho normal: frames quietos consecutivos suficientes.
             if self._resting_frames >= RESTING_FRAMES_REQUIRED:
                 self.status = DiceStatus.RESTING
-                self.result = self.top_face_value
                 return
             # Caminho de timeout: dado com jitter persistente (tipicamente
             # empilhado). Aceita o resultado mesmo sem frames consecutivos
             # suficientes.
             if self._settling_total >= SETTLING_TIMEOUT_FRAMES:
                 self.status = DiceStatus.RESTING
-                self.result = self.top_face_value
 
     # ── conveniências ────────────────────────────────────────────────
-
-    @property
-    def top_face_value(self) -> int:
-        if self.dice.dice_type == 'd4':
-            return self._d4_result_value()
-        return self.dice.top_face_value(self.rotation_matrix)
-
-    @property
-    def top_face_index(self) -> int:
-        if self.dice.dice_type == 'd4':
-            return self._d4_result_index()
-        return self.dice.top_face_index(self.rotation_matrix)
-
-    def _d4_result_index(self) -> int:
-        """No d4, o resultado é a face com normal mais apontada para BAIXO (Y-)."""
-        R = self.rotation_matrix
-        normals_world = self.dice.mesh.normals @ R.T
-        return int(np.argmin(normals_world[:, 1]))
-
-    def _d4_result_value(self) -> int:
-        fi = self._d4_result_index()
-        return int(self.dice.mesh.face_values[fi])
 
     @property
     def is_resting(self) -> bool:
@@ -248,9 +187,9 @@ class DiceState:
         alpha=0 → frame anterior, alpha=1 → frame atual.
         Usado pelo renderer para suavizar entre steps de física.
         """
-        q = quat_slerp_xyzw(self.prev_orientation, self.orientation_quat, alpha)
+        q = quat_slerp(self.prev_orientation, self.orientation_quat, alpha)
         return quat_to_matrix(q)
 
     def __repr__(self) -> str:
         return (f"DiceState({self.dice.dice_type}, "
-                f"status={self.status.name}, result={self.result})")
+                f"status={self.status.name})")

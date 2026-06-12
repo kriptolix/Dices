@@ -1,55 +1,118 @@
 # pydice3d
-
+ 
 > Physics-based 3D polyhedral dice simulation library for Python
-
-Pydice3d is a library focused on the physical simulation and rendering of polyhedral dice commonly used in tabletop RPGs and similar applications. The project was designed to be independent of any graphical user interface framework, allowing integration with GTK, Qt, Pygame, or any other solution capable of providing an OpenGL context.
-
-## Features
-
-* Physics simulation powered by PyBullet
-* OpenGL rendering
-* Support for polyhedral dice (d4, d6, d8, d10, d12, d20, d100, and fudge dice)
-* GUI toolkit-independent architecture
-* Simple integration with existing applications
-
-## Roadmap
-
-* OBJ mesh loading
-* Texture support
-* Sound effect playback
-
+ 
+Pydice3d simulates and renders polyhedral dice as used in tabletop RPGs. It handles physics, geometry, rendering, and audio, exposing a single entry point — `DiceSimulation` — that any application can drive with a few lines of code.
+ 
+The library has no dependency on any GUI toolkit. Anything that can provide an OpenGL 3.3 context (GTK, Qt, Pygame, SDL, etc.) can host it.
+ 
+---
+ 
+## Supported dice
+ 
+d4, d6, d8, d10, d12, d20, d100 (percentile, paired d10), and Fudge/FATE dice (df).
+ 
+---
+ 
+## Quick start
+ 
+### Headless (no rendering)
+ 
+```python
+from pydice3d.simulation import DiceSimulation
+ 
+sim = DiceSimulation()
+sim.roll({"d6": 2, "d20": 1})
+ 
+while not sim.is_done:
+    sim.step()
+ 
+print(sim.result.as_dict())  # {"d6": [3, 5], "d20": [17]}
+```
+ 
+### With OpenGL rendering
+ 
+```python
+from pydice3d.simulation import DiceSimulation, RollResult
+from pydice3d.renderer import Renderer
+ 
+sim = DiceSimulation(on_result=lambda r: print(r.summary()))
+sim.resize(viewport_w, viewport_h)
+sim.roll({"d6": 3}, theme="dark")
+ 
+renderer = Renderer(sim.scene, sim.dice_types, atlas_npy=..., atlas_json=...)
+ 
+# inside the render loop:
+sim.step()                                             # advance physics, update scene
+renderer.draw(sim.scene, sim.view_projection(),
+              sim.camera_position(), width, height)
+```
+ 
+---
+ 
 ## Architecture
-
-The library contains all simulation, scene management, rendering, and audio logic.
-
-The graphical user interface layer is only responsible for:
-
-* Creating the application window
-* Providing an OpenGL context
-* Processing input events
-
-## Demonstration Application
-
-The repository includes a GTK-based interface used for:
-
-* Manual testing
-* Feature development
-* Physics tuning
-* Visual validation
-
-It is not required to use the library.
-
+ 
+The library is split into clearly separated layers. Public API surface is intentionally small.
+ 
+```
+pydice3d/
+├── simulation.py    # Entry point. Orchestrates everything.
+├── physics.py       # PyBullet world, bodies, collision events
+├── spawner.py       # Spawn and launch dice into the scene
+├── dice.py          # Dice entity: physics body + mesh
+├── dice_state.py    # Per-die lifecycle (SPAWNED → ROLLING → SETTLING → RESTING)
+├── dice_mesh.py     # Polyhedron geometry (vertices, faces, normals, face values)
+├── results.py       # Roll result aggregation and completion monitoring
+├── scene.py         # CPU-side render data, model matrices, themes
+├── renderer.py      # OpenGL renderer (VAO/VBO, shaders, MSDF glyph atlas)
+├── shaders.py       # GLSL source and shader utilities
+├── camera.py        # Orbital camera, view/projection matrices
+├── math_utils.py    # Quaternion and vector math
+└── audio.py         # Collision and rolling audio engine
+```
+ 
+### Layer boundaries
+ 
+**Simulation layer** — `simulation`, `physics`, `spawner`, `dice`, `dice_state`, `results`  
+Knows nothing about OpenGL. Can be used in headless mode (tests, servers, CLI tools).
+ 
+**Render layer** — `scene`, `renderer`, `shaders`  
+Consumes `DiceState` poses to build GPU objects and draw calls. No physics knowledge.
+ 
+**Shared** — `camera`, `math_utils`, `dice_mesh`  
+Pure math and geometry. No dependencies on physics or OpenGL.
+ 
+### Data flow per frame
+ 
+```
+PhysicsWorld.step()
+    └─ DiceState.update_status()      # lifecycle transitions
+    └─ RollMonitor.tick()             # detect completion
+    └─ RenderScene.update()           # write model matrices from orientations
+         └─ Renderer.draw()           # GPU draw calls
+```
+ 
+### Entry point contract
+ 
+`DiceSimulation` is the only class a frontend needs to import from the library.
+`RollResult` is reexported from `simulation` so frontends don't need to reach into `results`.
+ 
+---
+ 
+## Demonstration application
+ 
+The repository includes a GTK4-based demo (`glarena.py`) used for manual testing, physics tuning, and visual validation. It is not required for using the library and is not part of the public API.
+ 
+---
+ 
 ## Status
-
-The project is currently under active development and is in an alpha stage.
-
-The architecture, APIs, and internal organization are evolving rapidly and may change significantly between releases. 
-
-Bug reports, feature suggestions, feedback end code contributions and pull requests will only be accepted once the project reaches a more stable state and the public APIs have settled. This policy is intended to avoid wasting contributor effort on code that may become obsolete as the project evolves.
-
+ 
+Active development, alpha stage. Architecture and APIs are still evolving and may change significantly between releases.
+ 
+Bug reports, suggestions, and pull requests will be accepted once the public API has stabilized. The intent is to avoid wasting contributor effort on code that may be superseded before then.
+ 
+---
+ 
 ## License
-
-The source code is distributed under the AGPL license.
-
-
-
+ 
+AGPL

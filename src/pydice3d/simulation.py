@@ -6,6 +6,7 @@ Responsibilities
 - Create and destroy the PhysicsWorld
 - Execute spawn_dice and maintain the DiceState list
 - Advance the simulation frame by frame (step)
+- Manage the RenderScene lifecycle for OpenGL frontends
 - Calculate camera/projection matrices
 - Resize the physical tray when the viewport changes
 - Monitor the end of the roll via RollMonitor
@@ -23,15 +24,21 @@ Headless use (tests, CLI, server)
 
 OpenGL frontend use
 ────────────────────────
-    sim = DiceSimulation()
-    sim.resize(viewport_w, viewport_h)   # synchronizes tray and camera
-    sim.roll({"d6": 3})
+    from pydice3d.simulation import DiceSimulation, RollResult
+
+    sim = DiceSimulation(on_result=my_callback)
+    sim.resize(viewport_w, viewport_h)
+    sim.roll({"d6": 3}, theme="dark")   # cria/recria RenderScene internamente
 
     # a cada frame do loop de render:
+    sim.step()                           # fisica + atualiza poses da cena
+    scene    = sim.scene                 # RenderScene com model_mats atualizados
     VP       = sim.view_projection()     # mat4 float32
     cam_pos  = sim.camera_position()     # vec3 float32
-    states   = sim.states                # DiceState list
-    sim.step()                           # advances physics + monitors the end.
+    renderer.draw(scene, VP, cam_pos, w, h)
+
+    # tipos dos dados para recursos GPU (wireframe, VAOs, etc.):
+    dice_types = sim.dice_types          # ["d6", "d6", "d20"]
 """
 
 from __future__ import annotations
@@ -44,24 +51,17 @@ import numpy as np
 from pydice3d.physics    import PhysicsWorld
 from pydice3d.dice_state import DiceState
 from pydice3d.spawner    import spawn_dice, SpawnConfig
-from pydice3d.results import RollMonitor, RollResult
-from pydice3d.camera     import look_at, perspective, Camera
+from pydice3d.results    import RollMonitor, RollResult
+from pydice3d.camera     import Camera
 from pydice3d.audio      import DiceAudioEngine
+from pydice3d.scene      import RenderScene
+
+# Reexportado para que frontends não precisem importar de results diretamente
+__all__ = ["DiceSimulation", "RollResult"]
 
 if TYPE_CHECKING:
     from pydice3d.audio import CollisionEvent
     
-# ────────────────────────────────────────────────────────────────────────────
-# Parâmetros de câmera padrão
-# ────────────────────────────────────────────────────────────────────────────
-
-_DEFAULT_CAM_EYE    = np.array([0.0, 12.0,  0.0], dtype=np.float32)
-_DEFAULT_CAM_CENTER = np.array([0.0,  0.0,  0.0], dtype=np.float32)
-_DEFAULT_CAM_UP     = np.array([0.0,  0.0, -1.0], dtype=np.float32)
-_DEFAULT_FOV_DEG    = 35.0
-_DEFAULT_NEAR       = 0.1
-_DEFAULT_FAR        = 50.0
-
 # Quantos substeps de física são executados por chamada a step()
 STEPS_PER_TICK: int = 4
 
@@ -99,20 +99,32 @@ class DiceSimulation:
         
         self.audio = DiceAudioEngine()
 
-        # Camera
-        self._camera = Camera()
-        self._cam_eye    = _DEFAULT_CAM_EYE.copy()
-        self._cam_center = _DEFAULT_CAM_CENTER.copy()
-        self._cam_up     = _DEFAULT_CAM_UP.copy()
-        self._fov_deg    = _DEFAULT_FOV_DEG
-        self._near       = _DEFAULT_NEAR
-        self._far        = _DEFAULT_FAR
+        # Câmera — delegada inteiramente ao módulo camera.py.
+        # A câmera original usava eye=[0,12,0] com up=[0,0,-1], uma vista
+        # top-down pura. Camera.from_eye_target com esse eye produz
+        # elevation=90°, que causa singularidade no look_at (forward ∥ up).
+        # Usamos coordenadas esféricas diretamente: elevation=89° preserva
+        # a sensação top-down sem degeneração, com azimuth=90° (câmera em +Z).
+        self._camera = Camera(
+            target        = np.array([0.0, 0.0, 0.0], dtype=float),
+            azimuth_deg   = 90.0,
+            elevation_deg = 89.0,
+            radius        = 12.0,
+            fov_y_deg     = 35.0,
+            near          = 0.1,
+            far           = 50.0,
+        )
 
-        # Viewport (pixels) 
+        # Viewport (pixels)
         self._vp_w: int = 660
         self._vp_h: int = 460
 
         self._simulating: bool = False
+
+        # Cena de render — criada em roll(), atualizada em step().
+        # None em modo headless (sem chamada a roll(theme=...)).
+        self._scene:  RenderScene | None = None
+        self._theme:  str = "light" 
 
     # ── Configuration ─────────────────────────────────────────────────────────
 
@@ -129,7 +141,8 @@ class DiceSimulation:
         self._vp_h = max(height, 1)
 
         # Half-height da bandeja no plano Y=0 projetada pelo frustum
-        half_h = math.tan(math.radians(self._fov_deg / 2)) * float(self._cam_eye[1])
+        eye_height = float(self._camera.eye_position()[1])
+        half_h = math.tan(math.radians(self._camera.fov_y_deg / 2)) * eye_height
         aspect = self._vp_w / self._vp_h
         half_w = half_h * aspect
 
@@ -138,20 +151,41 @@ class DiceSimulation:
 
     def set_camera(
         self,
-        eye:    Optional[np.ndarray] = None,
-        center: Optional[np.ndarray] = None,
-        up:     Optional[np.ndarray] = None,
+        eye:     Optional[np.ndarray] = None,
+        target:  Optional[np.ndarray] = None,
         fov_deg: Optional[float] = None,
-        near:   Optional[float] = None,
-        far:    Optional[float] = None,
+        near:    Optional[float] = None,
+        far:     Optional[float] = None,
     ) -> None:
-        """Ajusta qualquer parâmetro da câmera sem exigir todos."""
-        if eye    is not None: self._cam_eye    = np.asarray(eye,    dtype=np.float32)
-        if center is not None: self._cam_center = np.asarray(center, dtype=np.float32)
-        if up     is not None: self._cam_up     = np.asarray(up,     dtype=np.float32)
-        if fov_deg is not None: self._fov_deg   = float(fov_deg)
-        if near   is not None: self._near       = float(near)
-        if far    is not None: self._far        = float(far)
+        """
+        Ajusta parâmetros da câmera sem exigir todos.
+
+        `eye` e `target` recalculam azimute/elevação/raio internamente via
+        Camera.from_eye_target — a câmera continua expressada em coordenadas
+        esféricas, preservando orbit/zoom/pan.
+        """
+        if eye is not None or target is not None:
+            new_eye    = np.asarray(eye,    dtype=float) if eye    is not None else self._camera.eye_position()
+            new_target = np.asarray(target, dtype=float) if target is not None else np.asarray(self._camera.target, dtype=float)
+            self._camera = Camera.from_eye_target(
+                eye       = new_eye,
+                target    = new_target,
+                fov_y_deg = fov_deg if fov_deg is not None else self._camera.fov_y_deg,
+                near      = near    if near    is not None else self._camera.near,
+                far       = far     if far     is not None else self._camera.far,
+            )
+            # from_eye_target pode produzir elevation=90° se eye está
+            # diretamente acima do target — clamp para evitar singularidade.
+            
+            self._camera.elevation_deg = float(
+                np.clip(self._camera.elevation_deg,
+                         self._camera._ELEV_MIN,
+                         self._camera._ELEV_MAX)
+            )
+        else:
+            if fov_deg is not None: self._camera.fov_y_deg = float(fov_deg)
+            if near    is not None: self._camera.near      = float(near)
+            if far     is not None: self._camera.far       = float(far)
 
     # ── Controle da rolagem ──────────────────────────────────────────────────
 
@@ -160,6 +194,7 @@ class DiceSimulation:
         spec:      dict[str, int],
         cfg:       Optional[SpawnConfig] = None,
         on_result: Optional[Callable[[RollResult], None]] = None,
+        theme:     Optional[str] = None,
     ) -> None:
         """
         Inicia uma nova rolagem, descartando qualquer rolagem anterior.
@@ -170,16 +205,28 @@ class DiceSimulation:
                     d100 adiciona automaticamente 1 d10 de unidades por dado.
         cfg       : SpawnConfig para esta rolagem (sobrescreve o padrão do __init__).
         on_result : callback para esta rolagem específica (sobrescreve o do __init__).
+        theme     : tema visual ("light" | "dark"). Mantém o anterior se None.
+                    Quando fornecido, (re)cria a RenderScene automaticamente.
+                    Em modo headless, pode ser omitido — scene permanece None.
         """
         # Limpa estado anterior
         self._simulating = False
         self._physics.remove_all_dice()
         self._states.clear()
         self._monitor = None
+        self._scene   = None
+
+        if theme is not None:
+            self._theme = theme
 
         effective_cfg = cfg or self._spawn_cfg or SpawnConfig()
         result        = spawn_dice(spec=spec, physics=self._physics, cfg=effective_cfg)
         self._states  = result.states
+
+        # Cria RenderScene se houver tema definido (modo GL) ou se já existia uma
+        # antes (reroll sem alterar tema explicitamente).
+        if self._theme or theme is not None:
+            self._scene = RenderScene.from_states(self._states, self._theme)
 
         callback = on_result or self._on_result
         self._monitor = RollMonitor(self._states, on_complete=callback)
@@ -222,6 +269,12 @@ class DiceSimulation:
         self.audio.on_rolling(self._states)
         self.audio.tick()
 
+        # Atualiza poses da cena de render com as orientações atuais (alpha=1:
+        # sem interpolação — a interpolação é opcional e pode ser feita pelo
+        # frontend chamando scene.update(states, alpha) diretamente se precisar).
+        if self._scene is not None:
+            self._scene.update(self._states, alpha=1.0)
+
         if self._monitor:
             self._monitor.tick()
 
@@ -240,6 +293,7 @@ class DiceSimulation:
         self._physics.remove_all_dice()
         self._states.clear()
         self._monitor = None
+        self._scene   = None
         self.audio.stop_all()
 
     # ── Estado e resultado ───────────────────────────────────────────────────
@@ -276,6 +330,43 @@ class DiceSimulation:
     def states(self) -> list[DiceState]:
         """Lista de DiceState dos dados ativos (leitura)."""
         return self._states
+
+    @property
+    def scene(self) -> "RenderScene | None":
+        """
+        Cena de render com model_mats atualizados a cada step().
+
+        None em modo headless (roll() chamado sem theme).
+        Passe ao Renderer diretamente — sem precisar importar RenderScene.
+        """
+        return self._scene
+
+    @property
+    def dice_types(self) -> list[str]:
+        """
+        Lista de tipos dos dados ativos, na mesma ordem que scene.dice_renders.
+
+        Ex: ["d6", "d6", "d20"]
+        Útil para alocar recursos GPU (VAOs, wireframes) sem navegar em states.
+        """
+        return [s.dice.dice_type for s in self._states]
+
+    @property
+    def theme(self) -> str:
+        """Tema visual atual ("light" | "dark")."""
+        return self._theme
+
+    @theme.setter
+    def theme(self, value: str) -> None:
+        """
+        Altera o tema visual em tempo de execução.
+
+        Se já existe uma cena, reconstrói a RenderScene com o novo tema
+        (cores de glyphs, etc.) sem precisar reiniciar a rolagem.
+        """
+        self._theme = value
+        if self._scene is not None and self._states:
+            self._scene = RenderScene.from_states(self._states, self._theme)
 
     @property
     def physics(self) -> PhysicsWorld:
@@ -325,27 +416,31 @@ class DiceSimulation:
             sim.audio_volume = 0.5    # metade do volume
             sim.audio_volume = 0.0    # silencioso sem desligar o motor
         """
-        import numpy as np
+        
         self.audio.master_volume = float(np.clip(value, 0.0, 1.0))
 
     # ── Camera ───────────────────────────────────────────────────────────────
 
+    @property
+    def camera(self) -> Camera:
+        """Acesso direto à instância Camera (orbit, zoom, pan)."""
+        return self._camera
+
     def view_matrix(self) -> np.ndarray:
         """Matriz view 4×4 float32 (look-at)."""
-        return look_at(self._cam_eye, self._cam_center, self._cam_up)
+        return self._camera.view_matrix()
 
     def projection_matrix(self) -> np.ndarray:
         """Matriz de projeção perspectiva 4×4 float32."""
-        aspect = self._vp_w / max(self._vp_h, 1)
-        return perspective(math.radians(self._fov_deg), aspect, self._near, self._far)
+        return self._camera.projection_matrix(self._vp_w, self._vp_h)
 
     def view_projection(self) -> np.ndarray:
         """Produto P×V como float32 — pronto para enviar ao shader."""
-        return (self.projection_matrix() @ self.view_matrix()).astype(np.float32)
+        return self._camera.view_projection(self._vp_w, self._vp_h)
 
     def camera_position(self) -> np.ndarray:
         """Posição da câmera no espaço do mundo (vec3 float32)."""
-        return self._cam_eye.copy()
+        return self._camera.position
 
     # ── Ciclo de vida do PhysicsWorld ────────────────────────────────────────
 

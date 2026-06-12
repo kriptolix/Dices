@@ -84,34 +84,7 @@ class Dice:
         # Converte [x,y,z,w] → [w,x,y,z] para quat_to_matrix
         w, x, y, z = xyzw[3], xyzw[0], xyzw[1], xyzw[2]
         return _quat_wxyz_to_matrix(w, x, y, z)
-
-    # ------------------------------------------------------------------
-    # Geometria no mundo
-    # ------------------------------------------------------------------
-
-    def world_vertices(self, orientation: Optional[np.ndarray] = None) -> np.ndarray:
-        """
-        Vértices da malha no espaço do mundo.
-
-        Se `orientation` não for fornecida, usa orientation_matrix do PyBullet.
-        """
-        R   = orientation if orientation is not None else self.orientation_matrix
-        return (R @ self.mesh.vertices.T).T + self.position
-
-    def world_face_normals(self, orientation: Optional[np.ndarray] = None) -> np.ndarray:
-        """Normais das faces no espaço do mundo."""
-        R = orientation if orientation is not None else self.orientation_matrix
-        return (R @ self.mesh.normals.T).T
-
-    def top_face_index(self, orientation: Optional[np.ndarray] = None) -> int:
-        """Índice da face mais voltada para cima (+Y)."""
-        up      = np.array([0.0, 1.0, 0.0])
-        normals = self.world_face_normals(orientation)
-        return int(np.argmax(normals @ up))
-
-    def top_face_value(self, orientation: Optional[np.ndarray] = None) -> int:
-        """Valor numérico da face superior."""
-        return self.mesh.face_values[self.top_face_index(orientation)]
+        
 
     # ------------------------------------------------------------------
     # Conveniências
@@ -135,48 +108,12 @@ class Dice:
 # ---------------------------------------------------------------------------
 # Helper interno — conversão quaternion → matriz
 # ---------------------------------------------------------------------------
+# dice.py recebe o quaternion do PyBullet como (pos, orn) onde orn=[x,y,z,w].
+# orientation_matrix desempacota para w,x,y,z antes de chamar quat_to_matrix.
+
+from pydice3d.math_utils import quat_to_matrix as _quat_to_matrix
+
 
 def _quat_wxyz_to_matrix(w: float, x: float, y: float, z: float) -> np.ndarray:
-    return np.array([
-        [1 - 2*(y*y + z*z),     2*(x*y - w*z),     2*(x*z + w*y)],
-        [    2*(x*y + w*z), 1 - 2*(x*x + z*z),     2*(y*z - w*x)],
-        [    2*(x*z - w*y),     2*(y*z + w*x), 1 - 2*(x*x + y*y)],
-    ], dtype=np.float64)
-
-
-# ---------------------------------------------------------------------------
-# Factory para múltiplos dados
-# ---------------------------------------------------------------------------
-
-def create_dice_set(
-    spec:    dict[DiceType, int],
-    physics,
-    origin:  tuple = (0.0, 3.0, 0.0),
-    spacing: float = 2.5,
-    scale:   float = DEFAULT_SCALE,
-) -> list[Dice]:
-    """
-    Cria um conjunto de dados a partir de um spec {tipo: quantidade}.
-
-    Distribui os dados em linha a partir de `origin` com espaçamento `spacing`.
-
-    Exemplo
-    -------
-    dice_set = create_dice_set({"d6": 2, "d20": 1}, physics)
-    """
-    dice_list: list[Dice] = []
-    ox, oy, oz = origin
-
-    for dtype, count in spec.items():
-        for i in range(count):
-            x = ox + len(dice_list) * spacing
-            dice = Dice.create(
-                dice_type=dtype,
-                position=(x, oy, oz),
-                physics=physics,
-                scale=scale,
-                name=f"{dtype}_{i+1}",
-            )
-            dice_list.append(dice)
-
-    return dice_list
+    """Shim de compatibilidade: aceita componentes separados, delega a math_utils."""
+    return _quat_to_matrix(np.array([x, y, z, w], dtype=np.float64))

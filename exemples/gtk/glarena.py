@@ -1,8 +1,13 @@
 """
-glarena.py – GTK4 GLArea: integração entre GTK e DiceSimulation
+glarena.py - GTK4 GLArea: integração entre GTK e DiceSimulation
 
 Responsabilidade: conectar os sinais do ciclo de vida GTK/GL
 (realize / unrealize / render / resize) ao DiceSimulation e ao Renderer.
+
+glarena conhece apenas:
+  - pydice3d.simulation  (DiceSimulation, RollResult)
+  - pydice3d.renderer    (Renderer — necessário na camada GL)
+  - debug_wire           (wireframes de colisão, local ao frontend)
 
 Modos de debug
 ──────────────
@@ -23,16 +28,13 @@ from gi.repository import Gtk
 
 from OpenGL import GL
 
-from pydice3d.simulation     import DiceSimulation
-from pydice3d.renderer       import Renderer
-from pydice3d.scene    import RenderScene
-from pydice3d.results    import RollResult
- 
+from pydice3d.simulation import DiceSimulation, RollResult
+from pydice3d.renderer   import Renderer
+
 from debug_wire import (
     CollisionWireframe, build_wire_program,
     DEBUG_NONE, DEBUG_COLLISION, DEBUG_OVERLAY,
 )
-
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -74,21 +76,20 @@ class DiceGLArea(Gtk.GLArea):
         self._vp_w: int = 660
         self._vp_h: int = 460
 
-        
         self._sim = DiceSimulation(on_result=self._on_roll_complete)
 
         # Recursos OpenGL — criados em realize, destruídos em unrealize
-        self._renderer:   Renderer | None = None
-        self._scene:      RenderScene | None = None
-        self._wire_prog:  int = 0
-        self._wire_objs:  list[CollisionWireframe] = []
+        self._renderer:  Renderer | None = None
+        self._wire_prog: int = 0
+        self._wire_objs: list[CollisionWireframe] = []
         self._atlas_json: dict | None = None
 
         self._debug_mode: int = DEBUG_NONE
-        self._theme: str = "light"
 
         # Callback externo opcional: AppWindow pode sobrescrever
         self.on_roll_complete: object = None   # callable(RollResult) | None
+
+        self.theme = "dark"
 
         # Conecta sinais GTK
         self.connect("realize",   self._on_realize)
@@ -119,11 +120,11 @@ class DiceGLArea(Gtk.GLArea):
 
     @property
     def theme(self) -> str:
-        return self._theme
+        return self._sim.theme
 
     @theme.setter
     def theme(self, value: str) -> None:
-        self._theme = value
+        self._sim.theme = value          # simulation reconstrói a cena internamente
         if self._renderer:
             self._renderer.theme = value
         self.queue_render()
@@ -142,20 +143,13 @@ class DiceGLArea(Gtk.GLArea):
 
         self._wire_prog = build_wire_program()
 
-        # Carrega atlas de glifos (I/O feito aqui onde o contexto GL existe)
+        # Carrega atlas de glifos — I/O feito aqui onde o contexto GL existe.
+        # O Renderer só é criado em start_simulation(), quando a cena já existe.
         try:
             with open(_ATLAS_JSON, "r", encoding="utf-8") as f:
                 self._atlas_json = json.load(f)
         except Exception as e:
             print(f"[AVISO] Não foi possível carregar atlas.json: {e}")
-
-        self._scene    = RenderScene([])
-        self._renderer = Renderer(
-            self._scene, [],
-            atlas_npy=_ATLAS_NPY,
-            atlas_json=self._atlas_json,
-            theme=self._theme,
-        )
 
     def _on_unrealize(self, _area) -> None:
         self.make_current()
@@ -172,15 +166,11 @@ class DiceGLArea(Gtk.GLArea):
     def _on_render(self, _area, _ctx) -> bool:
         w, h = self._vp_w, self._vp_h
 
-        # Avança física e monitora término
+        # Avança física — scene.update() é chamado internamente em step()
         self._sim.step()
 
-        # Atualiza cena de render com as poses atuais dos dados
-        if self._scene and self._sim.states:
-            self._scene.update(self._sim.states, alpha=1.0)
-
-        # Renderiza
-        if self._renderer and self._scene:
+        scene = self._sim.scene
+        if self._renderer and scene:
             VP      = self._sim.view_projection()
             cam_pos = self._sim.camera_position()
 
@@ -188,17 +178,17 @@ class DiceGLArea(Gtk.GLArea):
                 GL.glViewport(0, 0, w, h)
                 GL.glClearColor(0.0, 0.0, 0.0, 0.0)
                 GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
-                self._draw_wire(VP)
+                self._draw_wire(VP, scene)
 
             elif self._debug_mode == DEBUG_OVERLAY:
-                self._renderer.draw(self._scene, VP, cam_pos, w, h)
+                self._renderer.draw(scene, VP, cam_pos, w, h)
                 GL.glEnable(GL.GL_POLYGON_OFFSET_LINE)
                 GL.glPolygonOffset(-1.0, -1.0)
-                self._draw_wire(VP)
+                self._draw_wire(VP, scene)
                 GL.glDisable(GL.GL_POLYGON_OFFSET_LINE)
 
             else:
-                self._renderer.draw(self._scene, VP, cam_pos, w, h)
+                self._renderer.draw(scene, VP, cam_pos, w, h)
         else:
             GL.glViewport(0, 0, w, h)
             GL.glClearColor(0.0, 0.0, 0.0, 0.0)
@@ -227,26 +217,23 @@ class DiceGLArea(Gtk.GLArea):
             w.delete()
         self._wire_objs.clear()
 
-        # Inicia simulação — spawn, estados, monitor
-        self._sim.roll(spec)
+        # Inicia simulação — spawn, estados, monitor e RenderScene
+        self._sim.roll(spec, theme=self._sim.theme)
 
-        # Cria um CollisionWireframe por dado (lazy: VAO construído no 1º draw)
-        for state in self._sim.states:
-            self._wire_objs.append(CollisionWireframe(state.dice.dice_type))
+        # Cria um CollisionWireframe por dado usando dice_types da simulação
+        for dtype in self._sim.dice_types:
+            self._wire_objs.append(CollisionWireframe(dtype))
 
-        # Cria/recarrega cena e objetos GPU
-        self._scene     = RenderScene.from_states(self._sim.states, theme=self._theme)
-        dice_types      = [s.dice.dice_type for s in self._sim.states]
-
+        # Recarrega recursos GPU do renderer com a cena recém-criada
         if self._renderer is None:
             self._renderer = Renderer(
-                self._scene, dice_types,
+                self._sim.scene, self._sim.dice_types,
                 atlas_npy=_ATLAS_NPY,
                 atlas_json=self._atlas_json,
-                theme=self._theme,
+                theme=self._sim.theme,
             )
         else:
-            self._renderer.reload(self._scene, dice_types)
+            self._renderer.reload(self._sim.scene, self._sim.dice_types)
 
         if self._renderer:
             self._renderer.debug_mode = self._debug_mode
@@ -255,11 +242,11 @@ class DiceGLArea(Gtk.GLArea):
 
     # ── Internos ──────────────────────────────────────────────────────────────
 
-    def _draw_wire(self, VP: np.ndarray) -> None:
+    def _draw_wire(self, VP: np.ndarray, scene) -> None:
         """Desenha os hulls de colisão de todos os dados ativos."""
-        if not self._wire_prog or not self._scene:
+        if not self._wire_prog:
             return
-        for wire, rd in zip(self._wire_objs, self._scene.dice_renders):
+        for wire, rd in zip(self._wire_objs, scene.dice_renders):
             MVP = (VP @ rd.model_mat).astype(np.float32)
             wire.draw(MVP, self._wire_prog)
 

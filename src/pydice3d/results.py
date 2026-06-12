@@ -47,11 +47,51 @@ atingiram DiceStatus.RESTING. Quando isso acontece:
 
 from __future__ import annotations
 
+import numpy as np
 from dataclasses import dataclass, field
 from typing import Callable, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pydice3d.dice_state import DiceState
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Helpers de leitura de valor de face
+# (movidos de DiceState — results.py é o único consumidor)
+# ────────────────────────────────────────────────────────────────────────────
+
+from pydice3d.math_utils import quat_to_matrix as _quat_to_matrix
+
+
+def _top_face_index_standard(state: "DiceState") -> int:
+    """Face com normal mais voltada para cima (+Y). Válido para d6/d8/d10/d12/d20/df/d100."""
+    R = _quat_to_matrix(state.orientation_quat)
+    normals_world = state.dice.mesh.normals @ R.T
+    return int(np.argmax(normals_world[:, 1]))
+
+
+def _top_face_index_d4(state: "DiceState") -> int:
+    """No d4, o resultado é a face com normal mais voltada para BAIXO (Y-)."""
+    R = _quat_to_matrix(state.orientation_quat)
+    normals_world = state.dice.mesh.normals @ R.T
+    return int(np.argmin(normals_world[:, 1]))
+
+
+def read_face_value(state: "DiceState") -> int:
+    """
+    Lê o valor da face de resultado de um DiceState em repouso.
+
+    Regras por tipo
+    ───────────────
+    d4   : face com normal mais voltada para baixo (Y−)
+    df   : face com normal mais voltada para cima (Y+); valores em {-1, 0, +1}
+    outros: face com normal mais voltada para cima (Y+)
+    """
+    if state.dice.dice_type == "d4":
+        fi = _top_face_index_d4(state)
+    else:
+        fi = _top_face_index_standard(state)
+    return int(state.dice.mesh.face_values[fi])
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -120,9 +160,10 @@ class RollResult:
             dtype = state.dice.dice_type
             if dtype not in values_by_type:
                 values_by_type[dtype] = []
-            if state.result is not None:
-                values_by_type[dtype].append(state.result)
-                total      += state.result
+            if state.is_resting:
+                value = read_face_value(state)
+                values_by_type[dtype].append(value)
+                total      += value
                 dice_count += 1
 
         # d100 + parceiros combinados
@@ -131,12 +172,12 @@ class RollResult:
                 values_by_type["d100"] = []
             for idx, d100_state in enumerate(d100_states):
                 partner = partner_states[idx] if idx < len(partner_states) else None
-                if d100_state.result is not None and partner is not None and partner.result is not None:
-                    units = partner.result
+                if d100_state.is_resting and partner is not None and partner.is_resting:
+                    units = read_face_value(partner)
                     # d10 usa face_value 10 para representar "0"
                     if units == 10:
                         units = 0
-                    tens = d100_state.result  # já é 0, 10, 20, ..., 90
+                    tens = read_face_value(d100_state)  # já é 0, 10, 20, ..., 90
                     combined = tens + units
                     # Convenção: 00+0 = 100
                     if combined == 0:

@@ -302,3 +302,54 @@ def spawn_dice(
         states=states,
         seed_used=cfg.seed,
     )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# create_dice_set — posicionamento estático em linha (sem física de lançamento)
+# ────────────────────────────────────────────────────────────────────────────
+
+def create_dice_set(
+    spec:    dict[str, int],
+    physics,
+    origin:  tuple = (0.0, 3.0, 0.0),
+    spacing: float = 2.5,
+    scale:   float = 1.0,
+) -> list[Dice]:
+    """
+    Cria um conjunto de dados distribuídos em linha, sem aplicar velocidades.
+
+    Útil para testes, visualização estática ou posicionamento manual.
+    Para uma rolagem com física completa, use :func:`spawn_dice` em vez disso.
+
+    Parâmetros
+    ----------
+    spec    : ``{"d6": 2, "d20": 1}`` — tipo → quantidade
+    physics : instância de PhysicsWorld
+    origin  : ponto inicial (x, y, z) da linha
+    spacing : distância entre centros dos dados
+    scale   : fator de escala visual
+
+    Retorna
+    -------
+    Lista de :class:`Dice` registrados no PhysicsWorld, prontos para render.
+
+    Exemplo
+    -------
+    >>> dice_set = create_dice_set({"d6": 2, "d20": 1}, physics)
+    """
+    dice_list: list[Dice] = []
+    ox, oy, oz = origin
+
+    for dtype, count in spec.items():
+        for i in range(count):
+            x = ox + len(dice_list) * spacing
+            dice = Dice.create(
+                dice_type=dtype,
+                position=(x, oy, oz),
+                physics=physics,
+                scale=scale,
+                name=f"{dtype}_{i + 1}",
+            )
+            dice_list.append(dice)
+
+    return dice_list

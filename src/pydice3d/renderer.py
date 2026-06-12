@@ -29,7 +29,7 @@ from typing import Optional
 from OpenGL import GL
 
 from pydice3d.scene import RenderScene, DiceRenderData
-from pydice3d.dice_mesh import DICE_THEMES, DEFAULT_DICE_COLOR
+from pydice3d.scene import DICE_THEMES, DEFAULT_DICE_COLOR
 from pydice3d.shaders import (
     build_dice_program, build_ground_program,
     set_uniform_mat4, set_uniform_mat3,
@@ -288,8 +288,7 @@ class Renderer:
         VP:       np.ndarray,
         cam_pos:  np.ndarray,
         width:    int,
-        height:   int,
-        theme:    Optional[str] = "light",
+        height:   int,        
     ) -> None:
         GL.glViewport(0, 0, width, height)
         GL.glClearColor(0.0, 0.0, 0.0, 0.0)

@@ -33,23 +33,7 @@ DiceType = Literal["d4", "d6", "d8", "d10", "d12", "d20", "d100", "df"]
 ALL_DICE: tuple[DiceType, ...] = ("d4", "d6", "d8", "d10", "d12", "d20", "d100", "df")
 
 
-# ────────────────────────────────────────────────────────────────────────────
-# Temas visuais — definidos aqui (camada de domínio) e reexportados por
-# renderer.py para não quebrar imports externos existentes.
-# ────────────────────────────────────────────────────────────────────────────
 
-from typing import NamedTuple
-
-class DiceTheme(NamedTuple):
-    dice_color:  tuple[float, float, float]
-    glyph_color: tuple[float, float, float]
-
-DICE_THEMES: dict[str, DiceTheme] = {
-    "dark":  DiceTheme(dice_color=(0.15, 0.15, 0.15), glyph_color=(0.95, 0.95, 0.95)),
-    "light": DiceTheme(dice_color=(0.95, 0.95, 0.95), glyph_color=(0.15, 0.15, 0.15)),
-}
-
-DEFAULT_DICE_COLOR: tuple[float, float, float] = (0.7, 0.7, 0.7)
 
 
 @dataclass(frozen=True)
@@ -228,7 +212,7 @@ def _build_d6(df=False) -> DiceMesh:
             vertices=vertices,
             faces=tuple(tuple(f) for f in faces),
             normals=normals,
-            face_values=(+1, +1, -1, +1, 0, 0),
+            face_values=(+1, +1, -1, -1, 0, 0),
         )
 
     return DiceMesh(
@@ -344,7 +328,7 @@ def _build_d10(d100=False) -> DiceMesh:
             vertices=vertices,
             faces=tuple(faces_raw),
             normals=normals,
-            face_values=(10, 20, 30, 40, 50, 60, 70, 80, 90, 100),
+            face_values=(0, 10, 20, 30, 40, 50, 60, 70, 80, 90),
         )
 
     return DiceMesh(

@@ -161,21 +161,7 @@ class Camera:
             fov_y_deg=fov_y_deg,
             near=near,
             far=far,
-        )
-
-    def _spherical_from_eye_target(self, eye, target):
-        eye = np.asarray(eye, dtype=float)
-        target = np.asarray(target, dtype=float)
-
-        offset = eye - target
-        radius = np.linalg.norm(offset)
-
-        x, y, z = offset
-
-        azimuth_deg = math.degrees(math.atan2(z, x))
-        elevation_deg = math.degrees(math.asin(y / radius))
-
-        return azimuth_deg, elevation_deg, radius
+        )    
     
     def eye_position(self) -> np.ndarray:
         """
